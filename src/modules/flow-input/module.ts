@@ -22,7 +22,7 @@ export const flowInputModule: WorkflowModule = {
   category: 'Input',
   description: 'Liefert genau ein vorhandenes oder manuell eingegebenes Newspaket an den Workflow.',
   color: '#0ea5e9',
-  version: '0.3.0',
+  version: '0.3.1',
   configFields: [
     {
       key: 'inputType',
@@ -37,17 +37,20 @@ export const flowInputModule: WorkflowModule = {
     },
     {
       key: 'packageId',
-      label: 'Paket-ID',
+      label: 'Vorhandenes Paket',
       type: 'text',
-      placeholder: 'Wird durch die Paketauswahl gesetzt',
-      description: 'Technische ID des ausgewählten vorhandenen Pakets.',
+      placeholder: 'Paketauswahl wird über die D1-Leseschnittstelle befüllt',
+      description: 'Wird nach Anschluss der vorhandenen Paketbibliothek automatisch durch die Auswahl gesetzt.',
+      showWhen: { key: 'inputType', equals: 'stored-package' },
     },
     {
       key: 'content',
       label: 'Manuelles Newspaket · JSON',
       type: 'textarea',
+      required: true,
       placeholder: '{\n  "source_url": "https://…",\n  "meta": { … },\n  "versions": { "v1": …, "v2": …, "v3": … }\n}',
       description: 'Nur als Notlösung. Das JSON muss exakt die definierte NewsPackage-Struktur erfüllen.',
+      showWhen: { key: 'inputType', equals: 'manual-package' },
     },
   ],
   outputs: [

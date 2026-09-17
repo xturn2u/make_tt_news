@@ -44,6 +44,7 @@ function unwrapPackage(value: unknown): unknown {
     record.payload,
     record.package_json,
     record.packageJson,
+    record.json,
     record.data,
   ];
 
@@ -92,6 +93,7 @@ function normalizeListItem(value: unknown, index: number): StoredPackageListItem
       ?? record.title
       ?? record.name
       ?? record.header
+      ?? record.source
       ?? id,
   );
 
@@ -125,6 +127,11 @@ function initialOrigin(): string {
 
 function listCandidates(origin: string): string[] {
   const paths = [
+    '/list.php?limit=100',
+    '/api/packages?limit=100',
+    '/api/gpt-packages?limit=100',
+    '/api/news-packages?limit=100',
+    '/api/package-library?limit=100',
     '/api/packages',
     '/api/gpt-packages',
     '/api/news-packages',
@@ -142,14 +149,20 @@ function detailCandidates(origin: string, listUrl: string, id: string): string[]
   const safeId = encodeURIComponent(id);
   const baseList = listUrl.split('?')[0].replace(/\/$/, '');
   return Array.from(new Set([
+    `${origin}/get.php?id=${safeId}`,
+    `${origin}/load.php?id=${safeId}`,
+    `${origin}/package.php?id=${safeId}`,
+    `${origin}/read.php?id=${safeId}`,
+    `${origin}/get-package.php?id=${safeId}`,
+    `${origin}/api/package?id=${safeId}`,
+    `${origin}/api/packages?id=${safeId}`,
+    `${origin}/api/gpt-package?id=${safeId}`,
     `${baseList}/${safeId}`,
     `${origin}/api/packages/${safeId}`,
     `${origin}/api/gpt-packages/${safeId}`,
     `${origin}/api/news-packages/${safeId}`,
     `${origin}/api/gpt-package/${safeId}`,
     `${origin}/api/package/${safeId}`,
-    `${origin}/api/gpt-package?id=${safeId}`,
-    `${origin}/api/packages?id=${safeId}`,
   ]));
 }
 
@@ -218,7 +231,7 @@ export function StoredPackagePicker({ packageId, storedPackage, onChange }: Prop
         setLoading(false);
         setError(
           'Keine lesbare Paket-API gefunden. Falls das Studio die Daten nur same-origin ausliefert, benötigen wir einen kleinen API-Proxy/Worker. ' +
-          (errors.length ? `Geprüft: ${errors.slice(0, 4).join(' · ')}` : ''),
+          (errors.length ? `Geprüft: ${errors.slice(0, 5).join(' · ')}` : ''),
         );
       }
     };
@@ -272,7 +285,7 @@ export function StoredPackagePicker({ packageId, storedPackage, onChange }: Prop
           failures.push(reason instanceof Error ? reason.message : String(reason));
         }
       }
-      setError(`Paketliste gefunden, aber Detaildaten für ${id} konnten nicht geladen werden. ${failures.slice(0, 3).join(' · ')}`);
+      setError(`Paketliste gefunden, aber Detaildaten für ${id} konnten nicht geladen werden. ${failures.slice(0, 4).join(' · ')}`);
     } finally {
       setLoading(false);
     }

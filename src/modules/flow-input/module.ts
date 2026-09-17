@@ -1,48 +1,117 @@
 import type { WorkflowModule } from '../../core/types';
-import { validateNewsPackage } from '../../domain/newsPackage';
+import { validateNewsPackage, type NewsPackage } from '../../domain/newsPackage';
 
-function parseManualPackage(value: string) {
+type ExtractedPackage = {
+  newsPackage: NewsPackage;
+  packageId?: string;
+};
+
+function stripCodeFence(value: string): string {
+  const trimmed = value.trim();
+  const match = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return match ? match[1].trim() : trimmed;
+}
+
+function parseMaybeJson(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const trimmed = stripCodeFence(value);
+  if (!trimmed) return value;
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return value;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function packageIdFrom(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const candidate = value.package_id ?? value.packageId ?? value.id ?? value.uuid;
+  return candidate === undefined || candidate === null ? undefined : String(candidate);
+}
+
+function collectPackages(value: unknown, depth = 0, inheritedId?: string): ExtractedPackage[] {
+  if (depth > 5) return [];
+
+  const parsed = parseMaybeJson(value);
+  const direct = validateNewsPackage(parsed);
+  if (direct.valid) {
+    return [{ newsPackage: direct.package, packageId: inheritedId }];
+  }
+
+  if (Array.isArray(parsed)) {
+    return parsed.flatMap((item) => collectPackages(item, depth + 1, inheritedId));
+  }
+
+  if (!isRecord(parsed)) return [];
+
+  const currentId = packageIdFrom(parsed) ?? inheritedId;
+  const keys = [
+    'package',
+    'newsPackage',
+    'news_package',
+    'payload',
+    'package_json',
+    'packageJson',
+    'json',
+    'data',
+    'item',
+    'record',
+  ];
+
+  return keys.flatMap((key) => (
+    parsed[key] === undefined
+      ? []
+      : collectPackages(parsed[key], depth + 1, currentId)
+  ));
+}
+
+function parseJsonInput(value: string): ExtractedPackage {
+  const normalized = stripCodeFence(value);
   let parsed: unknown;
   try {
-    parsed = JSON.parse(value);
+    parsed = JSON.parse(normalized);
   } catch {
-    throw new Error('Manueller Fallback muss gültiges JSON in der NewsPackage-Datenstruktur sein.');
+    throw new Error('Der Flow Input ist kein gültiges JSON. Bitte den vollständigen JSON-Export einfügen.');
   }
 
-  const validation = validateNewsPackage(parsed);
-  if (!validation.valid) {
-    throw new Error(`Manuelles Newspaket ist ungültig:\n- ${validation.errors.join('\n- ')}`);
+  const found = collectPackages(parsed);
+  const unique = Array.from(new Map(
+    found.map((entry) => [JSON.stringify(entry.newsPackage), entry]),
+  ).values());
+
+  if (unique.length === 1) return unique[0];
+
+  if (unique.length > 1) {
+    throw new Error(
+      `Der JSON-Import enthält ${unique.length} vollständige Newspakete. Bitte für diesen Flow genau ein Paket als JSON einfügen.`,
+    );
   }
-  return validation.package;
+
+  const rootCandidate = isRecord(parsed) && parsed.package !== undefined ? parsed.package : parsed;
+  const validation = validateNewsPackage(parseMaybeJson(rootCandidate));
+  const detail = validation.valid ? '' : `\n- ${validation.errors.join('\n- ')}`;
+  throw new Error(`Im JSON wurde kein vollständiges NewsPackage gefunden.${detail}`);
 }
 
 export const flowInputModule: WorkflowModule = {
   id: 'flow-input',
   name: 'Flow Input',
   category: 'Input',
-  description: 'Liefert genau ein vorhandenes oder manuell eingegebenes Newspaket an den Workflow.',
+  description: 'Übernimmt genau ein Newspaket als JSON und validiert es für den Workflow.',
   color: '#0ea5e9',
-  version: '0.3.2',
+  version: '0.4.0',
   configFields: [
     {
-      key: 'inputType',
-      label: 'Quelle',
-      type: 'select',
-      defaultValue: 'stored-package',
-      options: [
-        { label: 'Vorhandenes Newspaket', value: 'stored-package' },
-        { label: 'Manuelles Paket · Fallback', value: 'manual-package' },
-      ],
-      description: 'Im Normalfall wird ein Paket aus dem bestehenden Datenspeicher verwendet.',
-    },
-    {
       key: 'content',
-      label: 'Manuelles Newspaket · JSON',
+      label: 'Newspaket · JSON Input',
       type: 'textarea',
       required: true,
-      placeholder: '{\n  "source_url": "https://…",\n  "meta": { … },\n  "versions": { "v1": …, "v2": …, "v3": … }\n}',
-      description: 'Nur als Notlösung. Das JSON muss exakt die definierte NewsPackage-Struktur erfüllen.',
-      showWhen: { key: 'inputType', equals: 'manual-package' },
+      placeholder: '{\n  "package": {\n    "source_url": "https://…",\n    "meta": { "topic": "…", "breaking": false },\n    "versions": { "v1": { … }, "v2": { … }, "v3": { … } }\n  }\n}',
+      description: 'Akzeptiert sowohl ein direktes NewsPackage als auch den GPT/API-Body { "package": { … } }. JSON-Codeblöcke werden ebenfalls erkannt.',
     },
   ],
   outputs: [
@@ -52,37 +121,19 @@ export const flowInputModule: WorkflowModule = {
     { key: 'source', label: 'Quelle', type: 'string', required: true },
   ],
   async execute(_input, config, context) {
-    const inputType = String(config.inputType || 'stored-package');
-
-    if (inputType === 'manual-package') {
-      const content = String(config.content || '').trim();
-      if (!content) throw new Error('Manueller Fallback ist leer. Bitte ein vollständiges NewsPackage-JSON einfügen.');
-      const newsPackage = parseManualPackage(content);
-      context.log('Manuelles Fallback-Paket validiert und übernommen');
-      return {
-        inputType,
-        newsPackage,
-        source: 'manual-fallback',
-      };
+    const content = String(config.content || '').trim();
+    if (!content) {
+      throw new Error('JSON Input ist leer. Bitte ein vollständiges Newspaket einfügen.');
     }
 
-    const storedPackage = config.storedPackage;
-    const packageId = String(config.packageId || '');
-    if (!storedPackage || typeof storedPackage !== 'object') {
-      throw new Error('Bitte ein vorhandenes Newspaket aus dem Datenspeicher auswählen.');
-    }
+    const { newsPackage, packageId } = parseJsonInput(content);
+    context.log(`JSON-Newspaket${packageId ? ` ${packageId}` : ''} validiert und übernommen`);
 
-    const validation = validateNewsPackage(storedPackage);
-    if (!validation.valid) {
-      throw new Error(`Gespeichertes Newspaket entspricht nicht dem erwarteten Vertrag:\n- ${validation.errors.join('\n- ')}`);
-    }
-
-    context.log(`Vorhandenes Newspaket${packageId ? ` ${packageId}` : ''} übernommen`);
     return {
-      inputType,
-      newsPackage: validation.package,
-      packageId: packageId || undefined,
-      source: 'existing-store',
+      inputType: 'json',
+      newsPackage,
+      packageId,
+      source: 'json-import',
     };
   },
 };

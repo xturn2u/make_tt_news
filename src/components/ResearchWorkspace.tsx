@@ -1,25 +1,14 @@
-import { ExternalLink, Search } from 'lucide-react';
-import { useMemo, useState } from 'react';
-import type { ProjectState } from '../domain/project';
+import { ExternalLink, Image, Search } from 'lucide-react';
+import type { ProjectState, VersionKey } from '../domain/project';
 import { availableVersionKeys } from '../domain/project';
 
-export function ResearchWorkspace({project}:{project:ProjectState}){
-  const [platform,setPlatform]=useState('google');
-  const [query,setQuery]=useState('');
-  const [url,setUrl]=useState('');
+type Props={project:ProjectState;setProject:React.Dispatch<React.SetStateAction<ProjectState>>};
+
+export function ResearchWorkspace({project,setProject}:Props){
   const versions=availableVersionKeys(project.newsPackage);
-  const suggestions=useMemo(()=>versions.map(v=>({key:v,label:project.newsPackage?.versions[v]?.header||''})).filter(v=>v.label),[versions,project.newsPackage]);
-  const fallback=project.newsPackage?.meta.topic||suggestions[0]?.label||'';
-  const search=()=>{const term=encodeURIComponent(query||fallback);let target='https://www.google.com/search?q='+term;if(platform==='images')target='https://www.google.com/search?tbm=isch&q='+term;if(platform==='x')target='https://x.com/search?q='+term+'&src=typed_query';if(platform==='youtube')target='https://www.youtube.com/results?search_query='+term;if(platform==='tiktok')target='https://www.tiktok.com/search?q='+term;window.open(target,'_blank','noopener')};
-  const downloader=async()=>{if(!url)return;try{await navigator.clipboard.writeText(url)}catch{}window.open('https://cobalt.tools/?u='+encodeURIComponent(url),'_blank','noopener')};
+  const patchQuery=(version:VersionKey,value:string)=>setProject(current=>{const previous=current.research[version];return {...current,research:{...current.research,[version]:{query:value,imageSearchUrl:`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(value)}`,links:previous?.links||[],status:'idle'}}}});
   return <div className="workspace-section">
-    <div className="callout shared-callout"><Search size={18}/><div><b>Optionale Recherche · global</b><span>Dieses Werkzeug gehört zu keinem Versions-Flow. Ergebnisse und heruntergeladene Medien können anschließend als gemeinsame Assets genutzt werden.</span></div></div>
-    {suggestions.length>0&&<div className="research-suggestions">{suggestions.map(item=><button key={item.key} onClick={()=>setQuery(item.label)}><b>{item.key.toUpperCase()}</b><span>{item.label}</span></button>)}</div>}
-    <label>Suchbegriff<input value={query} onChange={e=>setQuery(e.target.value)} placeholder={fallback||'Suchbegriff'}/></label>
-    <div className="segmented wrap">{[['google','Google'],['x','X'],['youtube','YouTube'],['tiktok','TikTok'],['images','Bilder']].map(([value,label])=><button key={value} className={platform===value?'active':''} onClick={()=>setPlatform(value)}>{label}</button>)}</div>
-    <button className="primary full" onClick={search}><Search size={16}/>Suche öffnen</button>
-    <hr/>
-    <label>Recherche-Video<input value={url} onChange={e=>setUrl(e.target.value)} placeholder="Video-Link einfügen"/></label>
-    <button className="full" onClick={()=>void downloader()}><ExternalLink size={16}/>Download-Seite öffnen</button>
+    <div className="callout shared-callout"><Search size={18}/><div><b>Recherche für alle Versionsstränge</b><span>Beim Klick auf „Workflow starten“ wird jede Version separat recherchiert. Die Top-3-Treffer erscheinen direkt am jeweiligen Newspaket.</span></div></div>
+    <div className="research-version-list">{versions.map(version=>{const state=project.research[version];const fallback=project.newsPackage?.versions[version]?.header||'';const query=state?.query||fallback;return <section key={version} className="research-version-card"><div className="research-version-head"><b>{version.toUpperCase()}</b><span>{state?.status==='searching'?'Suche läuft …':state?.status==='done'?`${state.links.length} Treffer`:state?.status==='error'?'Fehler':'Bereit'}</span></div><label>Suchbegriff<input value={query} onChange={event=>patchQuery(version,event.target.value)}/></label><div className="research-version-links"><a href={state?.imageSearchUrl||`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(query)}`} target="_blank" rel="noreferrer"><Image size={13}/>Google Bildsuche</a>{state?.links.map((link,index)=><a key={link.url} href={link.url} target="_blank" rel="noreferrer"><ExternalLink size={12}/><span>{index+1}. {link.title}</span></a>)}</div>{state?.error&&<small className="research-error-text">{state.error}</small>}</section>})}</div>
   </div>;
 }

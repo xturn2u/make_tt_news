@@ -30,6 +30,15 @@ export type ProjectAsset = {
   caption?: string;
 };
 
+export type ResearchLink = { title: string; url: string };
+export type VersionResearchState = {
+  query: string;
+  imageSearchUrl: string;
+  links: ResearchLink[];
+  status: 'idle' | 'searching' | 'done' | 'error';
+  error?: string;
+};
+
 export type TimelineLane = 'banner' | 'main' | 'wan' | 'headline' | 'text' | 'sound';
 export type ClipTemplate = 'broll' | 'split' | 'story';
 export type ClipAnimation = 'news' | 'left' | 'right' | 'punch' | 'drop' | 'fade' | 'none';
@@ -53,15 +62,17 @@ export type TimelineClip = {
 
 export type VersionFlowState = {
   timeline: TimelineClip[];
+  voiceoverAssetId?: string;
 };
 
 export type ProjectState = {
   newsPackage: NewsPackage | null;
   activeVersion: VersionKey;
-  /** Shared media pool. Every version flow reads from the same array. */
+  /** Shared storage. Version-tagged assets are only offered to the matching studio. */
   assets: ProjectAsset[];
   notes: string;
   versionFlows: Partial<Record<VersionKey, VersionFlowState>>;
+  research: Partial<Record<VersionKey, VersionResearchState>>;
   /** Incremented after every JSON import so the canvas can rebuild its branches. */
   workflowRevision: number;
 };
@@ -125,6 +136,20 @@ export function createVersionFlows(pkg: NewsPackage | null): Partial<Record<Vers
   return Object.fromEntries(availableVersionKeys(pkg).map(key => [key, { timeline: [] }])) as Partial<Record<VersionKey, VersionFlowState>>;
 }
 
+export function createResearchState(pkg: NewsPackage | null): Partial<Record<VersionKey, VersionResearchState>> {
+  if (!pkg) return {};
+  return Object.fromEntries(availableVersionKeys(pkg).map(key => {
+    const version = pkg.versions[key]!;
+    const query = version.header || pkg.meta.topic;
+    return [key, {
+      query,
+      imageSearchUrl: `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(query)}`,
+      links: [],
+      status: 'idle' as const,
+    }];
+  })) as Partial<Record<VersionKey, VersionResearchState>>;
+}
+
 export function parsePackageJson(input: string): NewsPackage {
   let raw: unknown;
   const cleaned = input.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
@@ -171,6 +196,7 @@ export const emptyProject = (): ProjectState => ({
   assets: [],
   notes: '',
   versionFlows: {},
+  research: {},
   workflowRevision: 0,
 });
 

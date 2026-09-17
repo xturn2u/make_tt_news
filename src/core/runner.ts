@@ -2,6 +2,33 @@ import type { Edge, Node } from '@xyflow/react';
 import type { RunLog, WorkflowNodeData } from './types';
 import { moduleRegistry } from './moduleRegistry';
 
+export async function runSingleModule(
+  node: Node<WorkflowNodeData>,
+  input: Record<string, unknown> = {},
+): Promise<{ logs: RunLog[]; output: Record<string, unknown> }> {
+  const module = moduleRegistry[node.data.moduleId];
+  if (!module) throw new Error(`Unbekanntes Modul: ${node.data.moduleId}`);
+
+  const logs: RunLog[] = [
+    { nodeId: node.id, moduleId: module.id, status: 'running', message: `${module.name} läuft` },
+  ];
+
+  try {
+    const output = await module.execute(input, node.data.config || {}, {
+      projectId: 'dev-project',
+      log: (message) => logs.push({ nodeId: node.id, moduleId: module.id, status: 'running', message }),
+    });
+    logs.push({ nodeId: node.id, moduleId: module.id, status: 'success', message: `${module.name} abgeschlossen`, output });
+    return { logs, output };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logs.push({ nodeId: node.id, moduleId: module.id, status: 'error', message });
+    const wrapped = error instanceof Error ? error : new Error(message);
+    Object.assign(wrapped, { workflowLogs: logs });
+    throw wrapped;
+  }
+}
+
 export async function runWorkflow(nodes: Node<WorkflowNodeData>[], edges: Edge[]): Promise<{ logs: RunLog[]; outputs: Record<string, Record<string, unknown>> }> {
   const logs: RunLog[] = [];
   const outputs: Record<string, Record<string, unknown>> = {};

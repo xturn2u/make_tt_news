@@ -22,7 +22,7 @@ export const flowInputModule: WorkflowModule = {
   category: 'Input',
   description: 'Liefert genau ein vorhandenes oder manuell eingegebenes Newspaket an den Workflow.',
   color: '#0ea5e9',
-  version: '0.3.1',
+  version: '0.3.2',
   configFields: [
     {
       key: 'inputType',
@@ -34,14 +34,6 @@ export const flowInputModule: WorkflowModule = {
         { label: 'Manuelles Paket · Fallback', value: 'manual-package' },
       ],
       description: 'Im Normalfall wird ein Paket aus dem bestehenden Datenspeicher verwendet.',
-    },
-    {
-      key: 'packageId',
-      label: 'Vorhandenes Paket',
-      type: 'text',
-      placeholder: 'Paketauswahl wird über die D1-Leseschnittstelle befüllt',
-      description: 'Wird nach Anschluss der vorhandenen Paketbibliothek automatisch durch die Auswahl gesetzt.',
-      showWhen: { key: 'inputType', equals: 'stored-package' },
     },
     {
       key: 'content',

@@ -27,9 +27,12 @@ export type ProjectAsset = {
   size?: number;
   source?: string;
   version?: VersionKey;
+  caption?: string;
 };
 
-export type TimelineLane = 'banner' | 'main' | 'broll' | 'headline' | 'text' | 'sound';
+export type TimelineLane = 'banner' | 'main' | 'wan' | 'headline' | 'text' | 'sound';
+export type ClipTemplate = 'broll' | 'split' | 'story';
+export type ClipAnimation = 'news' | 'left' | 'right' | 'punch' | 'drop' | 'fade' | 'none';
 export type TimelineClip = {
   id: string;
   lane: TimelineLane;
@@ -38,6 +41,14 @@ export type TimelineClip = {
   start: number;
   duration: number;
   text?: string;
+  caption?: string;
+  template?: ClipTemplate;
+  animation?: ClipAnimation;
+  x?: number;
+  y?: number;
+  scale?: number;
+  rotation?: number;
+  volume?: number;
 };
 
 export type VersionFlowState = {

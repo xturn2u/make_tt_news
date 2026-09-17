@@ -10,24 +10,41 @@ type Props={moduleId:string;version?:VersionKey;project:ProjectState;setProject:
 type SharedProps=Omit<Props,'moduleId'|'onClose'|'version'>;
 type VersionProps=SharedProps&{version:VersionKey};
 
-function Header({title,subtitle,onClose}:{title:string;subtitle:string;onClose:()=>void}){return <div className="workspace-head"><div><h2>{title}</h2><p>{subtitle}</p></div><button className="icon-btn" onClick={onClose}><X size={18}/></button></div>}
+function Header({title,subtitle,onClose}:{title:string;subtitle:string;onClose:()=>void}){
+  return <div className="workspace-head"><div><h2>{title}</h2><p>{subtitle}</p></div><button className="icon-btn" onClick={onClose}><X size={18}/></button></div>;
+}
 function Empty({text}:{text:string}){return <div className="empty-state">{text}</div>}
 
 function JsonImport({project,setProject}:SharedProps){
-  const [json,setJson]=useState('');const [state,setState]=useState('');const fileRef=useRef<HTMLInputElement>(null);
-  const apply=(value=json)=>{try{const newsPackage=parsePackageJson(value);const versions=availableVersionKeys(newsPackage);const first=versions[0]||'v1';setProject(current=>({...current,newsPackage,activeVersion:first,versionFlows:createVersionFlows(newsPackage),research:createResearchState(newsPackage),workflowRevision:current.workflowRevision+1}));setState(`✓ ${newsPackage.meta.topic} · ${versions.length} Version${versions.length===1?'':'en'} · ${versions.length} Flow${versions.length===1?'':'s'} erstellt`)}catch(error){setState(error instanceof Error?error.message:String(error))}};
-  return <div className="workspace-section"><div className="callout"><FileJson size={18}/><div><b>JSON ist der Projekteinstieg</b><span>Jede vorhandene Version erzeugt automatisch einen eigenen Produktionsstrang.</span></div></div><textarea className="json-editor" value={json} onChange={e=>setJson(e.target.value)} placeholder={'{\n  "package": {\n    "source_url": "https://…",\n    "meta": { "topic": "…", "breaking": false },\n    "versions": { "v1": {}, "v2": {}, "v3": {} }\n  }\n}'}/><div className="action-row"><button className="primary" onClick={()=>apply()}>JSON importieren</button><button onClick={()=>fileRef.current?.click()}><Upload size={15}/>Datei wählen</button></div><input ref={fileRef} hidden type="file" accept="application/json,.json" onChange={async e=>{const f=e.target.files?.[0];if(!f)return;const value=await f.text();setJson(value);apply(value)}}/>{state&&<div className={`message ${state.startsWith('✓')?'ok':'error'}`}>{state}</div>}{project.newsPackage&&<div className="summary-card"><span>Aktuelles Paket</span><strong>{project.newsPackage.meta.topic}</strong><small>{availableVersionKeys(project.newsPackage).map(v=>v.toUpperCase()).join(' · ')}</small></div>}</div>
+  const [json,setJson]=useState('');
+  const [state,setState]=useState('');
+  const fileRef=useRef<HTMLInputElement>(null);
+  const apply=(value=json)=>{
+    try{
+      const newsPackage=parsePackageJson(value);
+      const versions=availableVersionKeys(newsPackage);
+      const first=versions[0]||'v1';
+      setProject(current=>({...current,newsPackage,activeVersion:first,versionFlows:createVersionFlows(newsPackage),research:createResearchState(newsPackage),workflowRevision:current.workflowRevision+1}));
+      setState(`✓ ${newsPackage.meta.topic} · ${versions.length} Version${versions.length===1?'':'en'} · ${versions.length} Flow${versions.length===1?'':'s'} erstellt`);
+    }catch(error){setState(error instanceof Error?error.message:String(error))}
+  };
+  return <div className="workspace-section"><div className="callout"><FileJson size={18}/><div><b>JSON ist der Projekteinstieg</b><span>Jede vorhandene Version erzeugt automatisch einen eigenen Produktionsstrang.</span></div></div><textarea className="json-editor" value={json} onChange={e=>setJson(e.target.value)} placeholder={'{\n  "package": {\n    "source_url": "https://…",\n    "meta": { "topic": "…", "breaking": false },\n    "versions": { "v1": {}, "v2": {}, "v3": {} }\n  }\n}'}/><div className="action-row"><button className="primary" onClick={()=>apply()}>JSON importieren</button><button onClick={()=>fileRef.current?.click()}><Upload size={15}/>Datei wählen</button></div><input ref={fileRef} hidden type="file" accept="application/json,.json" onChange={async e=>{const f=e.target.files?.[0];if(!f)return;const value=await f.text();setJson(value);apply(value)}}/>{state&&<div className={`message ${state.startsWith('✓')?'ok':'error'}`}>{state}</div>}{project.newsPackage&&<div className="summary-card"><span>Aktuelles Paket</span><strong>{project.newsPackage.meta.topic}</strong><small>{availableVersionKeys(project.newsPackage).map(v=>v.toUpperCase()).join(' · ')}</small></div>}</div>;
 }
 
 function CopyField({label,value,children,onCopied}:{label:string;value:string;children:React.ReactNode;onCopied:(label:string)=>void}){
-  const copy=async()=>{try{await navigator.clipboard.writeText(value);onCopied(label)}catch{}}
-  return <label className="wide copy-field"><span className="field-title">{label}</span><button type="button" className="copy-field-btn" onClick={()=>void copy()}><Copy size={12}/>Kopieren</button>{children}</label>
+  const copy=async()=>{try{await navigator.clipboard.writeText(value);onCopied(label)}catch{}};
+  return <label className="wide copy-field"><span className="field-title">{label}</span><button type="button" className="copy-field-btn" onClick={()=>void copy()}><Copy size={12}/>Kopieren</button>{children}</label>;
 }
 
 function NewspackageWorkspace({project,setProject,version}:VersionProps){
   const [copied,setCopied]=useState('');
-  const data=project.newsPackage?.versions[version];if(!data)return <Empty text={`${version.toUpperCase()} ist im Paket nicht vorhanden.`}/>;
-  const patch=(next:Partial<NewsVersion>)=>setProject(current=>{const currentVersion=current.newsPackage?.versions[version];if(!current.newsPackage||!currentVersion)return current;return {...current,newsPackage:{...current.newsPackage,versions:{...current.newsPackage.versions,[version]:{...currentVersion,...next}}}}});
+  const data=project.newsPackage?.versions[version];
+  if(!data)return <Empty text={`${version.toUpperCase()} ist im Paket nicht vorhanden.`}/>;
+  const patch=(next:Partial<NewsVersion>)=>setProject(current=>{
+    const currentVersion=current.newsPackage?.versions[version];
+    if(!current.newsPackage||!currentVersion)return current;
+    return {...current,newsPackage:{...current.newsPackage,versions:{...current.newsPackage.versions,[version]:{...currentVersion,...next}}}};
+  });
   const words=data.speech_text.trim().split(/\s+/).filter(Boolean).length;
   const copiedText=(label:string)=>{setCopied(label);window.setTimeout(()=>setCopied(''),1300)};
   return <div className="workspace-section newspackage-workspace"><div className="version-context"><b>{version.toUpperCase()}</b><span>{data.header}</span></div><div className="field-grid newspackage-fields">
@@ -37,31 +54,82 @@ function NewspackageWorkspace({project,setProject,version}:VersionProps){
     <CopyField label="Bildprompt" value={data.image_prompt} onCopied={copiedText}><textarea value={data.image_prompt} onChange={e=>patch({image_prompt:e.target.value})}/></CopyField>
     <label className="wide"><span className="field-title">POV / Visual</span><textarea value={data.pov_visual.description} onChange={e=>patch({pov_visual:{...data.pov_visual,description:e.target.value}})}/></label>
     <CopyField label="Hashtags" value={data.hashtags.join(' ')} onCopied={copiedText}><input value={data.hashtags.join(' ')} onChange={e=>patch({hashtags:e.target.value.split(/\s+/).filter(Boolean).slice(0,5)})}/></CopyField>
-  </div>{copied&&<div className="copy-toast">{copied} kopiert</div>}</div>
+  </div>{copied&&<div className="copy-toast">{copied} kopiert</div>}</div>;
 }
 
 function AssetsWorkspace({project,setProject}:SharedProps){
-  const [filter,setFilter]=useState<'all'|AssetKind>('all');const [search,setSearch]=useState('');const [dragging,setDragging]=useState(false);const file=useRef<HTMLInputElement>(null);const visible=project.assets.filter(asset=>(filter==='all'||asset.kind===filter)&&asset.name.toLowerCase().includes(search.toLowerCase()));
-  const addFiles=(files:FileList|File[]|null)=>{if(!files)return;const list=Array.from(files);const next=list.map(f=>({id:uid('asset'),kind:(f.type.startsWith('video')?'video':f.type.startsWith('audio')?'audio':'image') as AssetKind,name:f.name,url:URL.createObjectURL(f),mime:f.type,size:f.size,source:'upload'}));setProject(current=>({...current,assets:[...next,...current.assets]}))};
-  return <div className="workspace-section"><div className="callout shared-callout"><ImagePlus size={18}/><div><b>Asset-Bibliothek</b><span>Globale Assets stehen allen Studios zur Verfügung. Versionsbezogene Assets bleiben im jeweiligen Studio.</span></div></div><div className="asset-toolbar"><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Assets durchsuchen…"/><button onClick={()=>file.current?.click()}><ImagePlus size={16}/>Medien hinzufügen</button><input ref={file} hidden multiple type="file" accept="image/*,video/*,audio/*" onChange={e=>addFiles(e.target.files)}/></div>
-  <div className={`asset-dropzone ${dragging?'dragging':''}`} onDragEnter={e=>{e.preventDefault();setDragging(true)}} onDragOver={e=>{e.preventDefault();e.dataTransfer.dropEffect='copy'}} onDragLeave={()=>setDragging(false)} onDrop={e=>{e.preventDefault();setDragging(false);addFiles(e.dataTransfer.files)}}><Upload size={18}/><div><b>Dateien hier ablegen</b><span>Bilder, Videos und Audio per Drag & Drop hinzufügen</span></div></div>
-  <div className="filter-row">{(['all','image','video','headline','banner','audio','export'] as const).map(key=><button key={key} className={filter===key?'active':''} onClick={()=>setFilter(key)}>{key==='all'?'Alle':key}<span>{key==='all'?project.assets.length:project.assets.filter(a=>a.kind===key).length}</span></button>)}</div><div className="asset-grid">{visible.map(asset=><AssetCard key={asset.id} asset={asset} onDelete={()=>setProject(current=>({...current,assets:current.assets.filter(item=>item.id!==asset.id)}))}/>)}{!visible.length&&<Empty text="Noch keine passenden Assets vorhanden."/>}</div><label>Projekt-Notizen<textarea value={project.notes} onChange={e=>setProject(p=>({...p,notes:e.target.value}))} placeholder="Gemeinsame Hinweise für alle Versionen…"/></label></div>
+  const [filter,setFilter]=useState<'all'|AssetKind>('all');
+  const [search,setSearch]=useState('');
+  const [dragging,setDragging]=useState(false);
+  const file=useRef<HTMLInputElement>(null);
+  const visible=project.assets.filter(asset=>(filter==='all'||asset.kind===filter)&&asset.name.toLowerCase().includes(search.toLowerCase()));
+  const addFiles=(files:FileList|File[]|null)=>{
+    if(!files)return;
+    const next=Array.from(files).map(f=>({id:uid('asset'),kind:(f.type.startsWith('video')?'video':f.type.startsWith('audio')?'audio':'image') as AssetKind,name:f.name,url:URL.createObjectURL(f),mime:f.type,size:f.size,source:'upload'}));
+    setProject(current=>({...current,assets:[...next,...current.assets]}));
+  };
+  return <div className="workspace-section"><div className="callout shared-callout"><ImagePlus size={18}/><div><b>Asset-Bibliothek</b><span>Globale Assets stehen allen Studios zur Verfügung. Versionsbezogene Assets bleiben im jeweiligen Studio.</span></div></div><div className="asset-toolbar"><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Assets durchsuchen…"/><button onClick={()=>file.current?.click()}><ImagePlus size={16}/>Medien hinzufügen</button><input ref={file} hidden multiple type="file" accept="image/*,video/*,audio/*" onChange={e=>addFiles(e.target.files)}/></div><div className={`asset-dropzone ${dragging?'dragging':''}`} onDragEnter={e=>{e.preventDefault();setDragging(true)}} onDragOver={e=>{e.preventDefault();e.dataTransfer.dropEffect='copy'}} onDragLeave={()=>setDragging(false)} onDrop={e=>{e.preventDefault();setDragging(false);addFiles(e.dataTransfer.files)}}><Upload size={18}/><div><b>Dateien hier ablegen</b><span>Bilder, Videos und Audio per Drag & Drop hinzufügen</span></div></div><div className="filter-row">{(['all','image','video','headline','banner','audio','export'] as const).map(key=><button key={key} className={filter===key?'active':''} onClick={()=>setFilter(key)}>{key==='all'?'Alle':key}<span>{key==='all'?project.assets.length:project.assets.filter(a=>a.kind===key).length}</span></button>)}</div><div className="asset-grid">{visible.map(asset=><AssetCard key={asset.id} asset={asset} onDelete={()=>setProject(current=>({...current,assets:current.assets.filter(item=>item.id!==asset.id)}))}/>)}{!visible.length&&<Empty text="Noch keine passenden Assets vorhanden."/>}</div><label>Projekt-Notizen<textarea value={project.notes} onChange={e=>setProject(p=>({...p,notes:e.target.value}))} placeholder="Gemeinsame Hinweise für alle Versionen…"/></label></div>;
 }
 function AssetCard({asset,onDelete}:{asset:ProjectAsset;onDelete:()=>void}){return <article className="asset-card" draggable onDragStart={event=>{event.dataTransfer.setData('application/asset',asset.id);event.dataTransfer.effectAllowed='copy'}}><div className="asset-media">{asset.kind==='video'?<video src={asset.url} muted/>:asset.kind==='audio'?<div className="audio-icon">♪</div>:<img src={asset.url} alt=""/>}<span>{asset.version?`${asset.kind} · ${asset.version.toUpperCase()}`:asset.kind}</span><button onClick={onDelete}><Trash2 size={13}/></button></div><b>{asset.name}</b><small>{asset.size?`${(asset.size/1048576).toFixed(1)} MB`:asset.source}</small></article>}
 
-function Img2VidWorkspace({project,setProject}:SharedProps){const images=project.assets.filter(a=>['image','headline','banner'].includes(a.kind));const [asset,setAsset]=useState('');const [model,setModel]=useState('bytedance/seedance-1-pro');const [prompt,setPrompt]=useState('Create a realistic video from this image while preserving the original frame exactly. Keep the camera locked off and static. Do not add new objects. Allow only subtle environmental motion.');const chosen=images.find(a=>a.id===asset);return <div className="workspace-section"><div className="callout"><b>Optionales Werkzeug</b><span>Img2Vid erzeugt zusätzliche Assets.</span></div><label>Startbild<select value={asset} onChange={e=>setAsset(e.target.value)}><option value="">Asset wählen…</option>{images.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select></label>{chosen&&<img className="img2vid-preview" src={chosen.url} alt=""/>}<label>Videomodell<select value={model} onChange={e=>setModel(e.target.value)}><option value="bytedance/seedance-1-pro">Seedance 1 Pro</option><option value="wan-video/wan-2.2-i2v-fast">Wan 2.2 Fast</option><option value="kwaivgi/kling-v2.1">Kling v2.1</option></select></label><label>Prompt<textarea className="tall" value={prompt} onChange={e=>setPrompt(e.target.value)}/></label><button disabled={!chosen} className="primary full" onClick={()=>setProject(p=>({...p,notes:`${p.notes}\nImg2Vid vorbereitet: ${model} · ${chosen?.name||''}`.trim()}))}>Job vorbereiten</button></div>}
+function Img2VidWorkspace({project,setProject}:SharedProps){
+  const images=project.assets.filter(a=>['image','headline','banner'].includes(a.kind));
+  const [asset,setAsset]=useState('');
+  const [model,setModel]=useState('bytedance/seedance-1-pro');
+  const [prompt,setPrompt]=useState('Create a realistic video from this image while preserving the original frame exactly. Keep the camera locked off and static. Do not add new objects. Allow only subtle environmental motion.');
+  const chosen=images.find(a=>a.id===asset);
+  return <div className="workspace-section"><div className="callout"><b>Optionales Werkzeug</b><span>Img2Vid erzeugt zusätzliche Assets.</span></div><label>Startbild<select value={asset} onChange={e=>setAsset(e.target.value)}><option value="">Asset wählen…</option>{images.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select></label>{chosen&&<img className="img2vid-preview" src={chosen.url} alt=""/>}<label>Videomodell<select value={model} onChange={e=>setModel(e.target.value)}><option value="bytedance/seedance-1-pro">Seedance 1 Pro</option><option value="wan-video/wan-2.2-i2v-fast">Wan 2.2 Fast</option><option value="kwaivgi/kling-v2.1">Kling v2.1</option></select></label><label>Prompt<textarea className="tall" value={prompt} onChange={e=>setPrompt(e.target.value)}/></label><button disabled={!chosen} className="primary full" onClick={()=>setProject(p=>({...p,notes:`${p.notes}\nImg2Vid vorbereitet: ${model} · ${chosen?.name||''}`.trim()}))}>Job vorbereiten</button></div>;
+}
 
 function StudioOverlay({project,setProject,version,onClose}:VersionProps&{onClose:()=>void}){
-  const shellRef=useRef<HTMLDivElement>(null);const available=useMemo(()=>availableVersionKeys(project.newsPackage),[project.newsPackage]);const sources=available.filter(key=>key!==version);const [copySource,setCopySource]=useState<VersionKey|''>(()=>sources[0]||'');const [copyMessage,setCopyMessage]=useState('');const [browserFullscreen,setBrowserFullscreen]=useState(false);const data=project.newsPackage?.versions[version];
+  const shellRef=useRef<HTMLDivElement>(null);
+  const available=useMemo(()=>availableVersionKeys(project.newsPackage),[project.newsPackage]);
+  const sources=available.filter(key=>key!==version);
+  const [copySource,setCopySource]=useState<VersionKey|''>(()=>sources[0]||'');
+  const [copyMessage,setCopyMessage]=useState('');
+  const [browserFullscreen,setBrowserFullscreen]=useState(false);
+  const data=project.newsPackage?.versions[version];
   useEffect(()=>{if(copySource&&!sources.includes(copySource))setCopySource(sources[0]||'');else if(!copySource&&sources.length)setCopySource(sources[0])},[copySource,sources.join('|')]);
   useEffect(()=>{const change=()=>setBrowserFullscreen(Boolean(document.fullscreenElement));document.addEventListener('fullscreenchange',change);return()=>document.removeEventListener('fullscreenchange',change)},[]);
   useEffect(()=>()=>{if(document.fullscreenElement)void document.exitFullscreen().catch(()=>{})},[]);
   const toggleFullscreen=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else if(shellRef.current?.requestFullscreen)await shellRef.current.requestFullscreen()}catch{}};
-  const copyVersion=()=>{if(!copySource)return;const sourceTimeline=project.versionFlows[copySource]?.timeline||[];if(!sourceTimeline.length){setCopyMessage(`${copySource.toUpperCase()} enthält noch keine Studio-Inhalte.`);return}const targetTimeline=project.versionFlows[version]?.timeline||[];if(targetTimeline.length&&!window.confirm(`${version.toUpperCase()} enthält bereits ${targetTimeline.length} Clips. Soll die Timeline vollständig durch ${copySource.toUpperCase()} ersetzt werden?`))return;
-    setProject(current=>{const usedIds=new Set(sourceTimeline.map(c=>c.assetId).filter(Boolean) as string[]);const idMap=new Map<string,string>();const clonedAssets:ProjectAsset[]=[];for(const asset of current.assets){if(!usedIds.has(asset.id)||asset.version!==copySource)continue;const clone={...asset,id:uid('asset'),name:asset.name.replace(new RegExp(copySource,'i'),version),version};idMap.set(asset.id,clone.id);clonedAssets.push(clone)}const cloned:TimelineClip[]=sourceTimeline.map(clip=>({...clip,id:uid(clip.lane==='text'?'text':'clip'),assetId:clip.assetId?(idMap.get(clip.assetId)||clip.assetId):undefined}));return {...current,assets:[...clonedAssets,...current.assets],versionFlows:{...current.versionFlows,[version]:{timeline:cloned,voiceoverAssetId:current.versionFlows[version]?.voiceoverAssetId}}}}});setCopyMessage(`${sourceTimeline.length} Clips aus ${copySource.toUpperCase()} übernommen.`)};
-  const studioProject={...project,assets:project.assets.filter(asset=>!asset.version||asset.version===version)};
-  const studioSetter:React.Dispatch<React.SetStateAction<ProjectState>>=action=>setProject(current=>{const next=typeof action==='function'?action(current):action;const voiceoverAssetId=current.versionFlows[version]?.voiceoverAssetId;return {...next,versionFlows:{...next.versionFlows,[version]:{timeline:next.versionFlows[version]?.timeline||[],voiceoverAssetId:next.versionFlows[version]?.voiceoverAssetId||voiceoverAssetId}}}});
-  return <div ref={shellRef} className="studio-workspace-overlay"><header className="studio-workspace-header"><div className="studio-workspace-title"><span className="studio-version-badge">{version.toUpperCase()}</span><div><h2>Studio {version.toUpperCase()}</h2><p>{data?.header||'Interaktive 9:16-Produktion'}</p></div></div><div className="studio-version-copy">{sources.length?<><span>Von Version übernehmen</span><select value={copySource} onChange={e=>{setCopySource(e.target.value as VersionKey);setCopyMessage('')}}>{sources.map(key=><option key={key} value={key}>{key.toUpperCase()} · {project.newsPackage?.versions[key]?.header||'Version'}</option>)}</select><button onClick={copyVersion}><Copy size={15}/>1:1 übernehmen</button></>:<span className="studio-version-copy-empty">Keine weitere Version vorhanden</span>}{copyMessage&&<small>{copyMessage}</small>}</div><div className="studio-workspace-header-actions"><button onClick={()=>void toggleFullscreen()}>{browserFullscreen?<Minimize2 size={16}/>:<Maximize2 size={16}/>}<span>{browserFullscreen?'Vollbild verlassen':'Vollbild'}</span></button><button className="studio-close" onClick={onClose}><X size={18}/><span>Schließen</span></button></div></header><div className="studio-workspace-body"><StudioWorkspace project={studioProject} setProject={studioSetter} version={version}/></div></div>
+  const copyVersion=()=>{
+    if(!copySource)return;
+    const sourceTimeline=project.versionFlows[copySource]?.timeline||[];
+    if(!sourceTimeline.length){setCopyMessage(`${copySource.toUpperCase()} enthält noch keine Studio-Inhalte.`);return}
+    const targetTimeline=project.versionFlows[version]?.timeline||[];
+    if(targetTimeline.length&&!window.confirm(`${version.toUpperCase()} enthält bereits ${targetTimeline.length} Clips. Soll die Timeline vollständig durch ${copySource.toUpperCase()} ersetzt werden?`))return;
+    setProject(current=>{
+      const usedIds=new Set(sourceTimeline.map(c=>c.assetId).filter(Boolean) as string[]);
+      const idMap=new Map<string,string>();
+      const clonedAssets:ProjectAsset[]=[];
+      for(const asset of current.assets){
+        if(!usedIds.has(asset.id)||asset.version!==copySource)continue;
+        const clone:ProjectAsset={...asset,id:uid('asset'),name:asset.name.replace(new RegExp(copySource,'i'),version),version};
+        idMap.set(asset.id,clone.id);clonedAssets.push(clone);
+      }
+      const cloned:TimelineClip[]=sourceTimeline.map(clip=>({...clip,id:uid(clip.lane==='text'?'text':'clip'),assetId:clip.assetId?(idMap.get(clip.assetId)||clip.assetId):undefined}));
+      return {...current,assets:[...clonedAssets,...current.assets],versionFlows:{...current.versionFlows,[version]:{timeline:cloned,voiceoverAssetId:current.versionFlows[version]?.voiceoverAssetId}}};
+    });
+    setCopyMessage(`${sourceTimeline.length} Clips aus ${copySource.toUpperCase()} übernommen.`);
+  };
+  const studioProject:ProjectState={...project,assets:project.assets.filter(asset=>!asset.version||asset.version===version)};
+  const studioSetter:React.Dispatch<React.SetStateAction<ProjectState>>=action=>setProject(current=>{
+    const next=typeof action==='function'?action(current):action;
+    const voiceoverAssetId=current.versionFlows[version]?.voiceoverAssetId;
+    return {...next,versionFlows:{...next.versionFlows,[version]:{timeline:next.versionFlows[version]?.timeline||[],voiceoverAssetId:next.versionFlows[version]?.voiceoverAssetId||voiceoverAssetId}}};
+  });
+  return <div ref={shellRef} className="studio-workspace-overlay"><header className="studio-workspace-header"><div className="studio-workspace-title"><span className="studio-version-badge">{version.toUpperCase()}</span><div><h2>Studio {version.toUpperCase()}</h2><p>{data?.header||'Interaktive 9:16-Produktion'}</p></div></div><div className="studio-version-copy">{sources.length?<><span>Von Version übernehmen</span><select value={copySource} onChange={e=>{setCopySource(e.target.value as VersionKey);setCopyMessage('')}}>{sources.map(key=><option key={key} value={key}>{key.toUpperCase()} · {project.newsPackage?.versions[key]?.header||'Version'}</option>)}</select><button onClick={copyVersion}><Copy size={15}/>1:1 übernehmen</button></>:<span className="studio-version-copy-empty">Keine weitere Version vorhanden</span>}{copyMessage&&<small>{copyMessage}</small>}</div><div className="studio-workspace-header-actions"><button onClick={()=>void toggleFullscreen()}>{browserFullscreen?<Minimize2 size={16}/>:<Maximize2 size={16}/>}<span>{browserFullscreen?'Vollbild verlassen':'Vollbild'}</span></button><button className="studio-close" onClick={onClose}><X size={18}/><span>Schließen</span></button></div></header><div className="studio-workspace-body"><StudioWorkspace project={studioProject} setProject={studioSetter} version={version}/></div></div>;
 }
 
-export function ModuleWorkspace({moduleId,version,project,setProject,onClose}:Props){if(moduleId==='studio'&&version)return <StudioOverlay project={project} setProject={setProject} version={version} onClose={onClose}/>;let title='Modul',subtitle='';let body:React.ReactNode=<Empty text="Für dieses Modul ist keine Arbeitsfläche definiert."/>;if(moduleId==='json-input'){title='JSON Input';subtitle='Exportiertes Datenpaket importieren und Versions-Flows erzeugen.';body=<JsonImport project={project} setProject={setProject}/>}else if(moduleId==='news-package'&&version){title=`Newspaket ${version.toUpperCase()}`;subtitle=project.newsPackage?.versions[version]?.header||'Paketdaten dieses Versionsstrangs bearbeiten.';body=<NewspackageWorkspace project={project} setProject={setProject} version={version}/>}else if(moduleId==='headline'&&version){title=`Schlagzeile ${version.toUpperCase()}`;subtitle='Schlagzeilengenerator inklusive Zeitungsausschnitten.';body=<HeadlineWorkspace project={project} setProject={setProject} version={version}/>}else if(moduleId==='research'){title='Recherche';subtitle='Recherche-Einstellungen und Suchbegriffe aller Versionen.';body=<ResearchWorkspace project={project} setProject={setProject}/>}else if(moduleId==='assets'){title='Assets';subtitle='Asset-Bibliothek des Projekts.';body=<AssetsWorkspace project={project} setProject={setProject}/>}else if(moduleId==='img2vid'){title='Img2Vid';subtitle='Optionaler Erzeuger zusätzlicher Video-Assets.';body=<Img2VidWorkspace project={project} setProject={setProject}/>}return <aside className="workspace"><Header title={title} subtitle={subtitle} onClose={onClose}/><div className="workspace-body">{body}</div></aside>}
+export function ModuleWorkspace({moduleId,version,project,setProject,onClose}:Props){
+  if(moduleId==='studio'&&version)return <StudioOverlay project={project} setProject={setProject} version={version} onClose={onClose}/>;
+  let title='Modul',subtitle='';let body:React.ReactNode=<Empty text="Für dieses Modul ist keine Arbeitsfläche definiert."/>;
+  if(moduleId==='json-input'){title='JSON Input';subtitle='Exportiertes Datenpaket importieren und Versions-Flows erzeugen.';body=<JsonImport project={project} setProject={setProject}/>}
+  else if(moduleId==='news-package'&&version){title=`Newspaket ${version.toUpperCase()}`;subtitle=project.newsPackage?.versions[version]?.header||'Paketdaten dieses Versionsstrangs bearbeiten.';body=<NewspackageWorkspace project={project} setProject={setProject} version={version}/>}
+  else if(moduleId==='headline'&&version){title=`Schlagzeile ${version.toUpperCase()}`;subtitle='Schlagzeilengenerator inklusive Zeitungsausschnitten.';body=<HeadlineWorkspace project={project} setProject={setProject} version={version}/>}
+  else if(moduleId==='research'){title='Recherche';subtitle='Recherche-Einstellungen und Suchbegriffe aller Versionen.';body=<ResearchWorkspace project={project} setProject={setProject}/>}
+  else if(moduleId==='assets'){title='Assets';subtitle='Asset-Bibliothek des Projekts.';body=<AssetsWorkspace project={project} setProject={setProject}/>}
+  else if(moduleId==='img2vid'){title='Img2Vid';subtitle='Optionaler Erzeuger zusätzlicher Video-Assets.';body=<Img2VidWorkspace project={project} setProject={setProject}/>}
+  return <aside className="workspace"><Header title={title} subtitle={subtitle} onClose={onClose}/><div className="workspace-body">{body}</div></aside>;
+}

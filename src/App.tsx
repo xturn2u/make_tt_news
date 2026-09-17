@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useState } from 'react';
-import type { CSSProperties } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import type { CSSProperties, DragEvent } from 'react';
 import {
   addEdge,
   applyEdgeChanges,
@@ -10,6 +10,8 @@ import {
   MiniMap,
   Position,
   ReactFlow,
+  ReactFlowProvider,
+  useReactFlow,
   type Connection,
   type Edge,
   type EdgeChange,
@@ -18,488 +20,56 @@ import {
   type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Play, Plus, Save, Search, Trash2 } from 'lucide-react';
-import { ModuleConfigFields } from './components/ModuleConfigFields';
-import { libraryModules, moduleRegistry } from './core/moduleRegistry';
-import { runSingleModule, runWorkflow } from './core/runner';
-import type { RunLog, WorkflowNodeData } from './core/types';
+import { GripVertical, Search, Settings2, Sparkles } from 'lucide-react';
+import { ModuleWorkspace } from './components/ModuleWorkspace';
+import { emptyProject, type ProjectState } from './domain/project';
 
-const initialNodes: Node<WorkflowNodeData>[] = [
-  {
-    id: 'news',
-    type: 'workflow',
-    position: { x: 360, y: 70 },
-    data: {
-      moduleId: 'news-package',
-      label: 'Newspaket',
-      category: 'Produktion',
-      description: 'Übernimmt ein vollständiges Newspaket aus genau einem validierten JSON Flow Input',
-    },
-  },
-  {
-    id: 'headline',
-    type: 'workflow',
-    position: { x: 690, y: 70 },
-    data: {
-      moduleId: 'headline-generator',
-      label: 'Schlagzeilengenerator',
-      category: 'GPT',
-      description: 'Erstellt mehrere Hook-Varianten',
-      config: { variants: 5 },
-    },
-  },
-  {
-    id: 'research',
-    type: 'workflow',
-    position: { x: 690, y: 290 },
-    data: {
-      moduleId: 'research',
-      label: 'Recherche',
-      category: 'Recherche',
-      description: 'Sammelt aktuelle Infos und Hintergründe',
-    },
-  },
-  {
-    id: 'assets',
-    type: 'workflow',
-    position: { x: 380, y: 290 },
-    data: {
-      moduleId: 'asset-check',
-      label: 'Asset Check',
-      category: 'Assets',
-      description: 'Prüft Bild- und Videomaterial',
-    },
-  },
-  {
-    id: 'audio',
-    type: 'workflow',
-    position: { x: 280, y: 510 },
-    data: {
-      moduleId: 'wait-audio',
-      label: 'Wait for Audio',
-      category: 'Audio',
-      description: 'Wartet auf Voiceover',
-    },
-  },
-  {
-    id: 'video',
-    type: 'workflow',
-    position: { x: 560, y: 510 },
-    data: {
-      moduleId: 'wait-video',
-      label: 'Wait for Video',
-      category: 'Video',
-      description: 'Wartet auf Videomaterial',
-    },
-  },
-  {
-    id: 'render',
-    type: 'workflow',
-    position: { x: 420, y: 710 },
-    data: {
-      moduleId: 'auto-render',
-      label: 'Auto Render',
-      category: 'Produktion',
-      description: 'Kombiniert Audio, Video und Untertitel',
-    },
-  },
-  {
-    id: 'ready',
-    type: 'workflow',
-    position: { x: 750, y: 710 },
-    data: {
-      moduleId: 'ready',
-      label: 'Ready',
-      category: 'Output',
-      description: 'Video ist bereit',
-    },
-  },
+type ModuleId = 'json-input'|'news-package'|'headline'|'research'|'assets'|'studio'|'img2vid';
+type NodeData = { moduleId: ModuleId; label: string; description: string; color: string; icon: string };
+type ModuleDef = NodeData & { category: 'Flow'|'Optional' };
+
+const modules: ModuleDef[] = [
+  { moduleId:'json-input',label:'JSON Input',description:'Newspaket importieren',color:'#0ea5e9',icon:'{}',category:'Flow' },
+  { moduleId:'news-package',label:'Newspaket',description:'Versionen, Text & Prompter',color:'#7c3aed',icon:'N',category:'Flow' },
+  { moduleId:'headline',label:'Schlagzeile',description:'Dreizeiler & PNG',color:'#ef4444',icon:'H',category:'Flow' },
+  { moduleId:'research',label:'Recherche',description:'Suche & Downloader',color:'#2563eb',icon:'R',category:'Flow' },
+  { moduleId:'assets',label:'Assets',description:'Medienbibliothek',color:'#16a34a',icon:'A',category:'Flow' },
+  { moduleId:'studio',label:'Studio',description:'Timeline & Produktion',color:'#111827',icon:'S',category:'Flow' },
+  { moduleId:'img2vid',label:'Img2Vid',description:'Optionaler KI-Clip',color:'#db2777',icon:'V',category:'Optional' },
 ];
+const byId=Object.fromEntries(modules.map(m=>[m.moduleId,m])) as Record<ModuleId,ModuleDef>;
 
-const initialEdges: Edge[] = [
-  { id: 'e-news-headline', source: 'news', target: 'headline' },
-  { id: 'e-headline-research', source: 'headline', target: 'research' },
-  { id: 'e-research-assets', source: 'research', target: 'assets' },
-  { id: 'e-assets-audio', source: 'assets', target: 'audio' },
-  { id: 'e-assets-video', source: 'assets', target: 'video' },
-  { id: 'e-audio-render', source: 'audio', target: 'render' },
-  { id: 'e-video-render', source: 'video', target: 'render' },
-  { id: 'e-render-ready', source: 'render', target: 'ready' },
-];
+const initialNodes: Node<NodeData>[] = [
+  ['input','json-input',80,120],['news','news-package',360,120],['headline','headline',640,120],['research','research',920,120],['assets','assets',1200,120],['studio','studio',1480,120],['img2vid','img2vid',1200,360],
+].map(([id,moduleId,x,y])=>({id:String(id),type:'module',position:{x:Number(x),y:Number(y)},data:byId[moduleId as ModuleId]}));
+const initialEdges: Edge[]=[
+  ['input','news'],['news','headline'],['headline','research'],['research','assets'],['assets','studio'],['assets','img2vid'],['img2vid','studio'],
+].map(([source,target],i)=>({id:`e${i}`,source,target,type:'smoothstep'}));
 
-type ErrorWithLogs = Error & { workflowLogs?: RunLog[] };
-type WorkflowNodeExtraProps = NodeProps<Node<WorkflowNodeData>> & {
-  onAddInput: (nodeId: string) => void;
-  onRemoveInput: (nodeId: string) => void;
-  canAddInput: (nodeId: string) => boolean;
-};
+function FlowNode({data,selected}:NodeProps<Node<NodeData>>){return <div className={`flow-node ${selected?'selected':''}`} style={{'--node':data.color} as CSSProperties}><Handle type="target" position={Position.Left}/><div className="node-icon">{data.icon}</div><div className="node-text"><strong>{data.label}</strong><span>{data.description}</span></div><Handle type="source" position={Position.Right}/></div>}
 
-function WorkflowNode({ id, data, selected, onAddInput, onRemoveInput, canAddInput }: WorkflowNodeExtraProps) {
-  const mod = moduleRegistry[data.moduleId];
-  const isInput = data.moduleId === 'flow-input';
-  const inputLabel = 'JSON';
-  const inputAvailable = data.moduleId === 'news-package' ? canAddInput(id) : false;
-
-  return (
-    <div
-      className={`node ${selected ? 'selected' : ''} ${data.status || ''} ${isInput ? 'input-node' : ''}`}
-      style={{ '--accent': mod?.color || '#64748b' } as CSSProperties}
-    >
-      <Handle type="target" position={Position.Left} />
-      <div className="node-dot" />
-      <div className="node-copy">
-        <strong>{data.label}</strong>
-        <span>{isInput ? inputLabel : data.category}</span>
-        <p>{data.description}</p>
-      </div>
-
-      {isInput && (
-        <button
-          type="button"
-          className="remove-input nodrag nopan"
-          title="Flow Input entfernen"
-          onClick={(event) => {
-            event.stopPropagation();
-            onRemoveInput(id);
-          }}
-        >
-          <Trash2 size={13} />
-        </button>
-      )}
-
-      {data.moduleId === 'news-package' && (
-        <button
-          type="button"
-          className={`add-input nodrag nopan ${!inputAvailable ? 'input-present' : ''}`}
-          title={inputAvailable ? 'Flow Input hinzufügen' : 'Es ist bereits ein Input verbunden'}
-          disabled={!inputAvailable}
-          onClick={(event) => {
-            event.stopPropagation();
-            if (inputAvailable) onAddInput(id);
-          }}
-        >
-          {inputAvailable ? <><Plus size={14} /> Input</> : '1 Input'}
-        </button>
-      )}
-      <Handle type="source" position={Position.Right} />
-    </div>
-  );
-}
-
-function outputPreview(output?: Record<string, unknown>) {
-  if (!output) return {};
-  return output;
-}
-
-function logsFromError(error: unknown): RunLog[] {
-  if (error instanceof Error && (error as ErrorWithLogs).workflowLogs) {
-    return (error as ErrorWithLogs).workflowLogs || [];
-  }
-  return [];
-}
-
-export default function App() {
-  const [nodes, setNodes] = useState(initialNodes);
-  const [edges, setEdges] = useState(initialEdges);
-  const [selectedId, setSelectedId] = useState('news');
-  const [logs, setLogs] = useState<RunLog[]>([]);
-  const [running, setRunning] = useState(false);
-  const [testing, setTesting] = useState(false);
-
-  const incomingInputFor = useCallback((targetId: string) => {
-    return edges.find((edge) => {
-      if (edge.target !== targetId) return false;
-      const source = nodes.find((node) => node.id === edge.source);
-      return source?.data.moduleId === 'flow-input';
-    });
-  }, [edges, nodes]);
-
-  const canAddInputToNode = useCallback((targetId: string) => {
-    const target = nodes.find((node) => node.id === targetId);
-    if (target?.data.moduleId !== 'news-package') return false;
-    return !incomingInputFor(targetId);
-  }, [incomingInputFor, nodes]);
-
-  const addInputToNode = useCallback((targetId: string) => {
-    if (!canAddInputToNode(targetId)) return;
-
-    const target = nodes.find((node) => node.id === targetId);
-    if (!target) return;
-
-    const id = `flow-input-${Date.now()}`;
-    const newNode: Node<WorkflowNodeData> = {
-      id,
-      type: 'workflow',
-      position: {
-        x: target.position.x - 310,
-        y: target.position.y,
-      },
-      data: {
-        moduleId: 'flow-input',
-        label: 'Flow Input',
-        category: 'Input',
-        description: 'Liefert genau ein vollständiges Newspaket als JSON an den Workflow',
-        config: {
-          content: '',
-        },
-      },
-    };
-
-    setNodes((current) => [...current, newNode]);
-    setEdges((current) => [
-      ...current,
-      { id: `e-${id}-${targetId}`, source: id, target: targetId },
-    ]);
-    setSelectedId(id);
-  }, [canAddInputToNode, nodes]);
-
-  const removeInput = useCallback((nodeId: string) => {
-    const targetId = edges.find((edge) => edge.source === nodeId)?.target;
-    setNodes((current) => current.filter((node) => node.id !== nodeId));
-    setEdges((current) => current.filter((edge) => edge.source !== nodeId && edge.target !== nodeId));
-    setSelectedId(targetId && nodes.some((node) => node.id === targetId) ? targetId : 'news');
-  }, [edges, nodes]);
-
-  const WorkflowNodeComponent = useCallback(
-    (props: NodeProps<Node<WorkflowNodeData>>) => (
-      <WorkflowNode
-        {...props}
-        onAddInput={addInputToNode}
-        onRemoveInput={removeInput}
-        canAddInput={canAddInputToNode}
-      />
-    ),
-    [addInputToNode, removeInput, canAddInputToNode],
-  );
-
-  const nodeTypes = useMemo(() => ({ workflow: WorkflowNodeComponent }), [WorkflowNodeComponent]);
-  const selected = nodes.find((node) => node.id === selectedId) || null;
-  const selectedModule = selected ? moduleRegistry[selected.data.moduleId] : null;
-  const selectedHasInput = selected?.data.moduleId === 'news-package'
-    ? !canAddInputToNode(selected.id)
-    : false;
-
-  const groups = libraryModules.reduce<Record<string, typeof libraryModules>>((acc, module) => {
-    (acc[module.category] ??= []).push(module);
-    return acc;
-  }, {});
-
-  const onNodesChange = (changes: NodeChange<Node<WorkflowNodeData>>[]) =>
-    setNodes((current) => applyNodeChanges(changes, current));
-  const onEdgesChange = (changes: EdgeChange[]) =>
-    setEdges((current) => applyEdgeChanges(changes, current));
-  const onConnect = (connection: Connection) => {
-    if (!connection.target) return;
-    const target = nodes.find((node) => node.id === connection.target);
-    if (target?.data.moduleId === 'news-package' && edges.some((edge) => edge.target === connection.target)) {
-      setLogs([{
-        nodeId: target.id,
-        moduleId: target.data.moduleId,
-        status: 'error',
-        message: 'Newspaket erlaubt genau einen Input.',
-      }]);
-      return;
-    }
-    setEdges((current) => addEdge(connection, current));
-  };
-
-  const applyLogsToNodes = (runLogs: RunLog[], outputs?: Record<string, Record<string, unknown>>) => {
-    setNodes((current) => current.map((node) => {
-      const lastLog = [...runLogs].reverse().find((log) => log.nodeId === node.id);
-      if (!lastLog) return node;
-      return {
-        ...node,
-        data: {
-          ...node.data,
-          status: lastLog.status,
-          output: outputs?.[node.id] ?? lastLog.output ?? node.data.output,
-        },
-      };
-    }));
-  };
-
-  const run = async () => {
-    setRunning(true);
-    setLogs([]);
-    try {
-      const result = await runWorkflow(nodes, edges);
-      setLogs(result.logs);
-      applyLogsToNodes(result.logs, result.outputs);
-    } catch (error) {
-      const errorLogs = logsFromError(error);
-      setLogs(errorLogs);
-      applyLogsToNodes(errorLogs);
-      console.error(error);
-    } finally {
-      setRunning(false);
-    }
-  };
-
-  const testSelected = async () => {
-    if (!selected) return;
-    setTesting(true);
-    setLogs([]);
-    try {
-      const result = await runSingleModule(selected);
-      setLogs(result.logs);
-      setNodes((current) => current.map((node) => node.id === selected.id
-        ? { ...node, data: { ...node.data, status: 'success', output: result.output } }
-        : node));
-    } catch (error) {
-      const errorLogs = logsFromError(error);
-      setLogs(errorLogs);
-      setNodes((current) => current.map((node) => node.id === selected.id
-        ? { ...node, data: { ...node.data, status: 'error' } }
-        : node));
-      console.error(error);
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  const updateSelectedConfig = (key: string, value: unknown) => {
-    if (!selected) return;
-    setNodes((current) => current.map((node) => (
-      node.id === selected.id
-        ? { ...node, data: { ...node.data, config: { ...node.data.config, [key]: value } } }
-        : node
-    )));
-  };
-
-  return (
-    <div className="app">
-      <header>
-        <div className="brand">TikTok News Studio <b>BETA</b></div>
-        <nav>Projekte <span>Workflows</span> Medien Vorlagen Analytics</nav>
-        <div className="search"><Search size={16} /> In Projekten, Dateien, Workflows suchen ...</div>
-      </header>
-
-      <div className="toolbar">
-        <div><small>Aktuelles Projekt</small><strong>Morning Briefing</strong></div>
-        <div><h2>TikTok Daily News</h2><p>Modularer Produktions-Workflow</p></div>
-        <div className="actions">
-          <button><Save size={16} /> Gespeichert</button>
-          <button onClick={run} disabled={running || testing} className="primary">
-            <Play size={16} /> {running ? 'Läuft...' : 'Workflow starten'}
-          </button>
-        </div>
-      </div>
-
-      <main>
-        <aside className="library">
-          <div className="tabs"><b>Bausteine</b><span>Vorlagen</span><span>Meine Nodes</span></div>
-          <input placeholder="Bausteine suchen ..." />
-          {Object.entries(groups).map(([category, modules]) => (
-            <section key={category}>
-              <h4>{category}</h4>
-              {modules.map((module) => (
-                <div className="lib-item" key={module.id}>
-                  <i style={{ background: module.color }} />
-                  <div><b>{module.name}</b><small>{module.description}</small></div>
-                </div>
-              ))}
-            </section>
-          ))}
-        </aside>
-
-        <section className="canvas">
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={nodeTypes}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onNodeClick={(_, node) => setSelectedId(node.id)}
-            fitView
-          >
-            <Background gap={18} />
-            <Controls />
-            <MiniMap />
-          </ReactFlow>
-        </section>
-
-        <aside className="inspector">
-          {selected && selectedModule && (
-            <>
-              <div className="inspector-title">
-                <div className="icon">✦</div>
-                <div>
-                  <h3>{selected.data.label}</h3>
-                  <span>{selected.data.category} · v{selectedModule.version || 'dev'}</span>
-                </div>
-              </div>
-
-              <div className="inspector-tabs"><b>Konfiguration</b><span>Output</span><span>Hinweise</span></div>
-              <label>Modul-ID<input value={selected.data.moduleId} readOnly /></label>
-              <label>Beschreibung<textarea value={selected.data.description} readOnly /></label>
-
-              <ModuleConfigFields
-                module={selectedModule}
-                config={selected.data.config || {}}
-                onChange={updateSelectedConfig}
-              />
-
-              {selected.data.moduleId === 'news-package' && (
-                <button
-                  className="add-input-inspector"
-                  onClick={() => addInputToNode(selected.id)}
-                  disabled={selectedHasInput}
-                >
-                  {selectedHasInput ? '1 Input verbunden' : <><Plus size={15} /> Flow Input hinzufügen</>}
-                </button>
-              )}
-
-              {selected.data.moduleId === 'flow-input' && (
-                <button className="remove-input-inspector" onClick={() => removeInput(selected.id)}>
-                  <Trash2 size={15} /> Flow Input entfernen
-                </button>
-              )}
-
-              <button className="module-test" onClick={testSelected} disabled={testing || running}>
-                <Play size={15} /> {testing ? 'Modul läuft...' : 'Modul testen'}
-              </button>
-
-              {!!selectedModule.inputs?.length && (
-                <div className="contract">
-                  <h4>Input-Vertrag</h4>
-                  {selectedModule.inputs.map((field) => (
-                    <div key={field.key}>
-                      <code>{field.key}</code>
-                      <span>{field.type}{field.required ? ' · Pflicht' : ''}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {!!selectedModule.outputs?.length && (
-                <div className="contract">
-                  <h4>Output-Vertrag</h4>
-                  {selectedModule.outputs.map((field) => (
-                    <div key={field.key}>
-                      <code>{field.key}</code>
-                      <span>{field.type}{field.required ? ' · Pflicht' : ''}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div className="output">
-                <h4>Letzter Output</h4>
-                <pre>{JSON.stringify(outputPreview(selected.data.output), null, 2)}</pre>
-              </div>
-
-              <div className="runlog">
-                <h4>Testlauf</h4>
-                {logs.length === 0 && <p className="muted">Noch kein Lauf ausgeführt.</p>}
-                {logs.slice(-10).map((log, index) => (
-                  <div key={`${log.nodeId}-${index}`} className={`log ${log.status}`}>{log.message}</div>
-                ))}
-              </div>
-            </>
-          )}
-        </aside>
+function Workflow(){
+  const [nodes,setNodes]=useState(initialNodes); const [edges,setEdges]=useState(initialEdges); const [selected,setSelected]=useState<string>('input'); const [project,setProject]=useState<ProjectState>(emptyProject()); const [query,setQuery]=useState('');
+  const reactFlow=useReactFlow(); const wrapper=useRef<HTMLDivElement>(null);
+  const nodeTypes=useMemo(()=>({module:FlowNode}),[]);
+  const selectedNode=nodes.find(n=>n.id===selected); const moduleId=selectedNode?.data.moduleId;
+  const filtered=modules.filter(m=>m.label.toLowerCase().includes(query.toLowerCase())||m.description.toLowerCase().includes(query.toLowerCase()));
+  const statusFor=(id:ModuleId)=>{if(id==='json-input')return project.newsPackage?'ready':'';if(!project.newsPackage)return '';if(id==='news-package')return 'ready';if(id==='headline')return project.assets.some(a=>a.kind==='headline')?'ready':'';if(id==='assets')return project.assets.length?'ready':'';if(id==='studio')return project.timeline.length?'ready':'';return ''};
+  const onDrop=useCallback((event:DragEvent)=>{event.preventDefault();const id=event.dataTransfer.getData('application/module') as ModuleId;if(!id||!byId[id]||!wrapper.current)return;if(id==='json-input'&&nodes.some(n=>n.data.moduleId==='json-input'))return;const position=reactFlow.screenToFlowPosition({x:event.clientX,y:event.clientY});const node:Node<NodeData>={id:`${id}-${Date.now()}`,type:'module',position,data:byId[id]};setNodes(cur=>[...cur,node]);setSelected(node.id)},[nodes,reactFlow]);
+  const onConnect=(c:Connection)=>{if(!c.source||!c.target)return;setEdges(cur=>addEdge({...c,type:'smoothstep'},cur))};
+  return <div className="app-shell">
+    <header className="appbar"><div className="brand"><span className="brandmark">PM</span><div><strong>Projektmanagement</strong><small>{project.newsPackage?.meta.topic||'Neues Projekt'}</small></div></div><div className="project-meta">{project.newsPackage?<><span className="status-dot ok"/>Paket geladen · {project.assets.length} Assets · {project.timeline.length} Clips</>:<><span className="status-dot"/>JSON importieren, um zu starten</>}</div><button className="ghost"><Settings2 size={16}/>Tools</button></header>
+    <div className="work-area">
+      <aside className="module-library"><div className="library-title"><b>Bausteine</b><span>Drag & Drop</span></div><div className="library-search"><Search size={15}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Suchen…"/></div>{(['Flow','Optional'] as const).map(cat=><section key={cat}><h4>{cat}</h4>{filtered.filter(m=>m.category===cat).map(m=><button className="module-item" draggable key={m.moduleId} onDragStart={e=>{e.dataTransfer.setData('application/module',m.moduleId);e.dataTransfer.effectAllowed='move'}} onClick={()=>{const n=nodes.find(n=>n.data.moduleId===m.moduleId);if(n)setSelected(n.id)}}><GripVertical size={14}/><i style={{background:m.color}}>{m.icon}</i><div><strong>{m.label}</strong><span>{m.description}</span></div>{statusFor(m.moduleId)==='ready'&&<em>✓</em>}</button>)}</section>)}</aside>
+      <main ref={wrapper} className="flow-canvas" onDrop={onDrop} onDragOver={e=>{e.preventDefault();e.dataTransfer.dropEffect='move'}}>
+        <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={(c:NodeChange<Node<NodeData>>[])=>setNodes(n=>applyNodeChanges(c,n))} onEdgesChange={(c:EdgeChange[])=>setEdges(e=>applyEdgeChanges(c,e))} onConnect={onConnect} onNodeClick={(_,n)=>setSelected(n.id)} fitView minZoom={.35} maxZoom={1.5} deleteKeyCode={['Backspace','Delete']}>
+          <Background gap={22} size={1}/><Controls showInteractive={false}/><MiniMap pannable zoomable nodeColor={n=>(n.data as NodeData).color}/>
+        </ReactFlow>
+        <div className="canvas-hint"><Sparkles size={15}/><span>Node anklicken = Funktion öffnen · Bausteine links auf die Fläche ziehen</span></div>
       </main>
+      {moduleId&&<ModuleWorkspace moduleId={moduleId} project={project} setProject={setProject} onClose={()=>setSelected('')}/>} 
     </div>
-  );
+  </div>
 }
+
+export default function App(){return <ReactFlowProvider><Workflow/></ReactFlowProvider>}

@@ -3,6 +3,7 @@ import { Copy, FileJson, ImagePlus, Maximize2, Minimize2, Trash2, Upload, X } fr
 import type { AssetKind, NewsVersion, ProjectAsset, ProjectState, TimelineClip, VersionKey } from '../domain/project';
 import { availableVersionKeys, createResearchState, createVersionFlows, parsePackageJson, uid } from '../domain/project';
 import { HeadlineWorkspace } from './HeadlineWorkspace';
+import { PhotoDepotWorkspace } from './PhotoDepotWorkspace';
 import { ResearchWorkspace } from './ResearchWorkspace';
 import { StudioWorkspace } from './StudioWorkspace';
 
@@ -62,18 +63,20 @@ function AssetsWorkspace({project,setProject}:SharedProps){
   const [search,setSearch]=useState('');
   const [dragging,setDragging]=useState(false);
   const file=useRef<HTMLInputElement>(null);
-  const visible=project.assets.filter(asset=>(filter==='all'||asset.kind===filter)&&asset.name.toLowerCase().includes(search.toLowerCase()));
+  const depotCount=project.assets.filter(asset=>asset.source==='photo-depot').length;
+  const library=project.assets.filter(asset=>asset.source!=='photo-depot');
+  const visible=library.filter(asset=>(filter==='all'||asset.kind===filter)&&asset.name.toLowerCase().includes(search.toLowerCase()));
   const addFiles=(files:FileList|File[]|null)=>{
     if(!files)return;
     const next=Array.from(files).map(f=>({id:uid('asset'),kind:(f.type.startsWith('video')?'video':f.type.startsWith('audio')?'audio':'image') as AssetKind,name:f.name,url:URL.createObjectURL(f),mime:f.type,size:f.size,source:'upload'}));
     setProject(current=>({...current,assets:[...next,...current.assets]}));
   };
-  return <div className="workspace-section"><div className="callout shared-callout"><ImagePlus size={18}/><div><b>Asset-Bibliothek</b><span>Globale Assets stehen allen Studios zur Verfügung. Versionsbezogene Assets bleiben im jeweiligen Studio.</span></div></div><div className="asset-toolbar"><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Assets durchsuchen…"/><button onClick={()=>file.current?.click()}><ImagePlus size={16}/>Medien hinzufügen</button><input ref={file} hidden multiple type="file" accept="image/*,video/*,audio/*" onChange={e=>addFiles(e.target.files)}/></div><div className={`asset-dropzone ${dragging?'dragging':''}`} onDragEnter={e=>{e.preventDefault();setDragging(true)}} onDragOver={e=>{e.preventDefault();e.dataTransfer.dropEffect='copy'}} onDragLeave={()=>setDragging(false)} onDrop={e=>{e.preventDefault();setDragging(false);addFiles(e.dataTransfer.files)}}><Upload size={18}/><div><b>Dateien hier ablegen</b><span>Bilder, Videos und Audio per Drag & Drop hinzufügen</span></div></div><div className="filter-row">{(['all','image','video','headline','banner','audio','export'] as const).map(key=><button key={key} className={filter===key?'active':''} onClick={()=>setFilter(key)}>{key==='all'?'Alle':key}<span>{key==='all'?project.assets.length:project.assets.filter(a=>a.kind===key).length}</span></button>)}</div><div className="asset-grid">{visible.map(asset=><AssetCard key={asset.id} asset={asset} onDelete={()=>setProject(current=>({...current,assets:current.assets.filter(item=>item.id!==asset.id)}))}/>)}{!visible.length&&<Empty text="Noch keine passenden Assets vorhanden."/>}</div><label>Projekt-Notizen<textarea value={project.notes} onChange={e=>setProject(p=>({...p,notes:e.target.value}))} placeholder="Gemeinsame Hinweise für alle Versionen…"/></label></div>;
+  return <div className="workspace-section"><div className="callout shared-callout"><ImagePlus size={18}/><div><b>Asset-Bibliothek</b><span>{library.length} aktive Assets · {depotCount} unbearbeitete Fotos im Zwischendepot.</span></div></div><div className="asset-toolbar"><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Assets durchsuchen…"/><button onClick={()=>file.current?.click()}><ImagePlus size={16}/>Medien hinzufügen</button><input ref={file} hidden multiple type="file" accept="image/*,video/*,audio/*" onChange={e=>addFiles(e.target.files)}/></div><div className={`asset-dropzone ${dragging?'dragging':''}`} onDragEnter={e=>{e.preventDefault();setDragging(true)}} onDragOver={e=>{e.preventDefault();e.dataTransfer.dropEffect='copy'}} onDragLeave={()=>setDragging(false)} onDrop={e=>{e.preventDefault();setDragging(false);addFiles(e.dataTransfer.files)}}><Upload size={18}/><div><b>Dateien hier ablegen</b><span>Bereits verwendbare Bilder, Videos und Audio direkt in Assets ablegen</span></div></div><div className="filter-row">{(['all','image','video','headline','banner','audio','export'] as const).map(key=><button key={key} className={filter===key?'active':''} onClick={()=>setFilter(key)}>{key==='all'?'Alle':key}<span>{key==='all'?library.length:library.filter(a=>a.kind===key).length}</span></button>)}</div><div className="asset-grid">{visible.map(asset=><AssetCard key={asset.id} asset={asset} onDelete={()=>setProject(current=>({...current,assets:current.assets.filter(item=>item.id!==asset.id)}))}/>)}{!visible.length&&<Empty text="Noch keine passenden Assets vorhanden."/>}</div><label>Projekt-Notizen<textarea value={project.notes} onChange={e=>setProject(p=>({...p,notes:e.target.value}))} placeholder="Gemeinsame Hinweise für alle Versionen…"/></label></div>;
 }
 function AssetCard({asset,onDelete}:{asset:ProjectAsset;onDelete:()=>void}){return <article className="asset-card" draggable onDragStart={event=>{event.dataTransfer.setData('application/asset',asset.id);event.dataTransfer.effectAllowed='copy'}}><div className="asset-media">{asset.kind==='video'?<video src={asset.url} muted/>:asset.kind==='audio'?<div className="audio-icon">♪</div>:<img src={asset.url} alt=""/>}<span>{asset.version?`${asset.kind} · ${asset.version.toUpperCase()}`:asset.kind}</span><button onClick={onDelete}><Trash2 size={13}/></button></div><b>{asset.name}</b><small>{asset.size?`${(asset.size/1048576).toFixed(1)} MB`:asset.source}</small></article>}
 
 function Img2VidWorkspace({project,setProject}:SharedProps){
-  const images=project.assets.filter(a=>['image','headline','banner'].includes(a.kind));
+  const images=project.assets.filter(a=>a.source!=='photo-depot'&&['image','headline','banner'].includes(a.kind));
   const [asset,setAsset]=useState('');
   const [model,setModel]=useState('bytedance/seedance-1-pro');
   const [prompt,setPrompt]=useState('Create a realistic video from this image while preserving the original frame exactly. Keep the camera locked off and static. Do not add new objects. Allow only subtle environmental motion.');
@@ -113,7 +116,7 @@ function StudioOverlay({project,setProject,version,onClose}:VersionProps&{onClos
     });
     setCopyMessage(`${sourceTimeline.length} Clips aus ${copySource.toUpperCase()} übernommen.`);
   };
-  const studioProject:ProjectState={...project,assets:project.assets.filter(asset=>!asset.version||asset.version===version)};
+  const studioProject:ProjectState={...project,assets:project.assets.filter(asset=>asset.source!=='photo-depot'&&(!asset.version||asset.version===version))};
   const studioSetter:React.Dispatch<React.SetStateAction<ProjectState>>=action=>setProject(current=>{
     const next=typeof action==='function'?action(current):action;
     const voiceoverAssetId=current.versionFlows[version]?.voiceoverAssetId;
@@ -129,6 +132,7 @@ export function ModuleWorkspace({moduleId,version,project,setProject,onClose}:Pr
   else if(moduleId==='news-package'&&version){title=`Newspaket ${version.toUpperCase()}`;subtitle=project.newsPackage?.versions[version]?.header||'Paketdaten dieses Versionsstrangs bearbeiten.';body=<NewspackageWorkspace project={project} setProject={setProject} version={version}/>}
   else if(moduleId==='headline'&&version){title=`Schlagzeile ${version.toUpperCase()}`;subtitle='Schlagzeilengenerator inklusive Zeitungsausschnitten.';body=<HeadlineWorkspace project={project} setProject={setProject} version={version}/>}
   else if(moduleId==='research'){title='Recherche';subtitle='Recherche-Einstellungen und Suchbegriffe aller Versionen.';body=<ResearchWorkspace project={project} setProject={setProject}/>}
+  else if(moduleId==='photo-depot'){title='Foto-Depot';subtitle='Zwischenspeicher für noch unbearbeitetes Bildmaterial.';body=<PhotoDepotWorkspace project={project} setProject={setProject}/>}
   else if(moduleId==='assets'){title='Assets';subtitle='Asset-Bibliothek des Projekts.';body=<AssetsWorkspace project={project} setProject={setProject}/>}
   else if(moduleId==='img2vid'){title='Img2Vid';subtitle='Optionaler Erzeuger zusätzlicher Video-Assets.';body=<Img2VidWorkspace project={project} setProject={setProject}/>}
   return <aside className="workspace"><Header title={title} subtitle={subtitle} onClose={onClose}/><div className="workspace-body">{body}</div></aside>;

@@ -5,20 +5,21 @@ import '@xyflow/react/dist/style.css';
 import './research-overrides.css';
 import { ExternalLink, GripVertical, Play, Search, Settings2 } from 'lucide-react';
 import { ModuleWorkspace } from './components/ModuleWorkspace';
-import { availableVersionKeys, emptyProject, type NewsPackage, type ProjectAsset, type ProjectState, type VersionKey, uid } from './domain/project';
+import { availableVersionKeys, emptyProject, type ProjectAsset, type ProjectState, type VersionKey, uid } from './domain/project';
 import { generatePackageAssets } from './services/generatedAssets';
 import { searchTopLinks } from './services/research';
 
-type ModuleId='json-input'|'news-package'|'headline'|'research'|'assets'|'studio'|'img2vid';
-type NodeData={moduleId:ModuleId;label:string;description:string;detail?:string;color:string;icon:string;version?:VersionKey;shared?:boolean;optional?:boolean;assetCount?:number;voiceoverName?:string;researchStatus?:string};
+type ModuleId='json-input'|'news-package'|'headline'|'research'|'photo-depot'|'assets'|'studio'|'img2vid';
+type NodeData={moduleId:ModuleId;label:string;description:string;detail?:string;color:string;icon:string;version?:VersionKey;shared?:boolean;optional?:boolean;assetCount?:number;depotCount?:number;voiceoverName?:string;researchStatus?:string};
 type LinkNodeData={label:string;url:string;kind:'image'|'result'|'loading'|'error';version:VersionKey};
-type ModuleDef=Omit<NodeData,'version'|'shared'|'optional'|'detail'|'assetCount'|'voiceoverName'|'researchStatus'>&{category:'Flow'|'Optional'|'Tool';versioned?:boolean;singleton?:boolean};
+type ModuleDef=Omit<NodeData,'version'|'shared'|'optional'|'detail'|'assetCount'|'depotCount'|'voiceoverName'|'researchStatus'>&{category:'Flow'|'Optional'|'Tool';versioned?:boolean;singleton?:boolean};
 
 const modules:ModuleDef[]=[
   {moduleId:'json-input',label:'JSON Input',description:'Newspaket importieren',color:'#0ea5e9',icon:'{}',category:'Flow',singleton:true},
   {moduleId:'news-package',label:'Newspaket',description:'Text & Paketdaten',color:'#7c3aed',icon:'N',category:'Flow',versioned:true},
   {moduleId:'headline',label:'Schlagzeile',description:'Generator & Zeitungsausschnitte',color:'#ef4444',icon:'H',category:'Flow',versioned:true},
   {moduleId:'studio',label:'Studio',description:'Timeline & Produktion',color:'#111827',icon:'S',category:'Flow',versioned:true},
+  {moduleId:'photo-depot',label:'Foto-Depot',description:'Unbearbeitete Fotos',color:'#d97706',icon:'D',category:'Tool',singleton:true},
   {moduleId:'assets',label:'Assets',description:'Medienbibliothek',color:'#16a34a',icon:'A',category:'Tool',singleton:true},
   {moduleId:'research',label:'Recherche',description:'Startet für alle Versionen',color:'#2563eb',icon:'R',category:'Tool',singleton:true},
   {moduleId:'img2vid',label:'Img2Vid',description:'Optionaler KI-Clip',color:'#db2777',icon:'V',category:'Optional'},
@@ -32,18 +33,23 @@ function nodeData(moduleId:ModuleId,version?:VersionKey,shared=false,optional=fa
 
 function FlowNode({data,selected}:NodeProps<Node<NodeData>>){
   const isStudio=data.moduleId==='studio'&&Boolean(data.version);
+  const isDepot=data.moduleId==='photo-depot';
   const isNews=data.moduleId==='news-package';
   return <div
-    className={`flow-node ${selected?'selected':''} ${data.shared?'shared-node':''} ${data.optional?'optional-node':''} ${isStudio?'studio-drop-node':''}`}
+    className={`flow-node ${selected?'selected':''} ${data.shared?'shared-node':''} ${data.optional?'optional-node':''} ${isStudio?'studio-drop-node':''} ${isDepot?'photo-depot-node':''}`}
     style={{'--node':data.color} as CSSProperties}
-    onDragOver={event=>{if(isStudio&&event.dataTransfer.types.includes('Files')){event.preventDefault();event.stopPropagation();event.dataTransfer.dropEffect='copy'}}}
-    onDrop={event=>{if(!isStudio||!data.version||!event.dataTransfer.files.length)return;event.preventDefault();event.stopPropagation();window.dispatchEvent(new CustomEvent('studio-voiceover-drop',{detail:{version:data.version,file:event.dataTransfer.files[0]}}))}}
+    onDragOver={event=>{if((isStudio||isDepot)&&event.dataTransfer.types.includes('Files')){event.preventDefault();event.stopPropagation();event.dataTransfer.dropEffect='copy'}}}
+    onDrop={event=>{
+      if(!event.dataTransfer.files.length)return;
+      if(isStudio&&data.version){event.preventDefault();event.stopPropagation();window.dispatchEvent(new CustomEvent('studio-voiceover-drop',{detail:{version:data.version,file:event.dataTransfer.files[0]}}));return;}
+      if(isDepot){event.preventDefault();event.stopPropagation();window.dispatchEvent(new CustomEvent('photo-depot-drop',{detail:{files:Array.from(event.dataTransfer.files)}}));}
+    }}
   >
     <Handle id="flow-left" type="target" position={Position.Left}/>
     {isNews&&<><Handle id="research-top" className="research-branch-handle" type="source" position={Position.Top}/><Handle id="research-bottom" className="research-branch-handle" type="source" position={Position.Bottom}/></>}
     <div className="node-icon">{data.icon}</div>
     <div className="node-text"><strong>{data.label}</strong><span>{data.description}</span>{data.detail&&<small className="node-detail" title={data.detail}>{data.detail}</small>}{data.voiceoverName&&<small className="voiceover-node-info">🎙 {data.voiceoverName}</small>}{data.researchStatus&&<small className="research-node-info">{data.researchStatus}</small>}</div>
-    {data.version&&<em className="version-chip">{data.version.toUpperCase()}</em>}{data.shared&&!data.optional&&<em className="shared-chip">GLOBAL</em>}{data.optional&&<em className="optional-chip">OPTIONAL</em>}{data.moduleId==='assets'&&typeof data.assetCount==='number'&&<em className="asset-count-chip">{data.assetCount}</em>}
+    {data.version&&<em className="version-chip">{data.version.toUpperCase()}</em>}{data.shared&&!data.optional&&<em className="shared-chip">GLOBAL</em>}{data.optional&&<em className="optional-chip">OPTIONAL</em>}{data.moduleId==='assets'&&typeof data.assetCount==='number'&&<em className="asset-count-chip">{data.assetCount}</em>}{data.moduleId==='photo-depot'&&typeof data.depotCount==='number'&&<em className="depot-count-chip">{data.depotCount}</em>}
     <Handle id="flow-right" type="source" position={Position.Right}/>
   </div>;
 }
@@ -52,15 +58,22 @@ function ResearchLinkNode({data}:NodeProps<Node<LinkNodeData>>){
   const disabled=!data.url;
   return <div className={`research-link-node ${data.kind}`}>
     <Handle type="target" position={data.kind==='image'?Position.Bottom:Position.Top}/>
-    {disabled?<span>{data.label}</span>:<a href={data.url} target="_blank" rel="noreferrer"><ExternalLink size={11}/><span>{data.label}</span></a>}
+    {disabled?<span>{data.label}</span>:<a href={data.url} target="_blank" rel="noreferrer"><ExternalLink size={10}/><span>{data.label}</span></a>}
   </div>;
 }
 
-function baseGraph(project:ProjectState){return{nodes:[
-  {id:'research-global',type:'module',position:{x:30,y:35},data:{...nodeData('research',undefined,true,true),detail:'Noch nicht gestartet'}},
-  {id:'assets-shared',type:'module',position:{x:650,y:35},data:{...nodeData('assets',undefined,true),assetCount:project.assets.length,detail:`${project.assets.length} Assets gesamt`}},
-  {id:'input',type:'module',position:{x:45,y:330},data:nodeData('json-input')},
-] as Node<NodeData>[],edges:[] as Edge[]}}
+const activeAssets=(project:ProjectState)=>project.assets.filter(asset=>asset.source!=='photo-depot');
+const depotAssets=(project:ProjectState)=>project.assets.filter(asset=>asset.source==='photo-depot');
+
+function baseGraph(project:ProjectState){
+  const assets=activeAssets(project).length;
+  const depot=depotAssets(project).length;
+  return{nodes:[
+    {id:'research-global',type:'module',position:{x:30,y:35},data:{...nodeData('research',undefined,true,true),detail:'Noch nicht gestartet'}},
+    {id:'photo-depot',type:'module',position:{x:410,y:35},data:{...nodeData('photo-depot'),depotCount:depot,detail:`${depot} Fotos warten`}},
+    {id:'assets-shared',type:'module',position:{x:650,y:35},data:{...nodeData('assets',undefined,true),assetCount:assets,detail:`${assets} Assets gesamt`}},
+    {id:'input',type:'module',position:{x:45,y:330},data:nodeData('json-input')},
+  ] as Node<NodeData>[],edges:[{id:'e-depot-assets',source:'photo-depot',sourceHandle:'flow-right',target:'assets-shared',targetHandle:'flow-left',type:'smoothstep',animated:depot>0,style:{stroke:'#f59e0b',strokeDasharray:'4 4'}}] as Edge[]}}
 
 function graphForProject(project:ProjectState){
   const pkg=project.newsPackage;
@@ -70,12 +83,15 @@ function graphForProject(project:ProjectState){
   const firstY=190;
   const middleY=firstY+((versions.length-1)*rowGap)/2;
   const researchDone=versions.filter(v=>project.research[v]?.status==='done').length;
+  const assets=activeAssets(project).length;
+  const depot=depotAssets(project).length;
   const nodes:Array<Node<NodeData>|Node<LinkNodeData>>=[
     {id:'research-global',type:'module',position:{x:30,y:35},data:{...nodeData('research',undefined,true,true),detail:`${researchDone}/${versions.length} Versionen recherchiert`,researchStatus:researchDone===versions.length?'Recherche bereit':'Workflow starten'}},
-    {id:'assets-shared',type:'module',position:{x:650,y:35},data:{...nodeData('assets',undefined,true),assetCount:project.assets.length,detail:`${project.assets.length} Assets gesamt`}},
+    {id:'photo-depot',type:'module',position:{x:410,y:35},data:{...nodeData('photo-depot'),depotCount:depot,detail:`${depot} Fotos warten`}},
+    {id:'assets-shared',type:'module',position:{x:650,y:35},data:{...nodeData('assets',undefined,true),assetCount:assets,detail:`${assets} Assets gesamt`}},
     {id:'input',type:'module',position:{x:45,y:middleY},data:nodeData('json-input')},
   ];
-  const edges:Edge[]=[];
+  const edges:Edge[]=[{id:'e-depot-assets',source:'photo-depot',sourceHandle:'flow-right',target:'assets-shared',targetHandle:'flow-left',type:'smoothstep',animated:depot>0,style:{stroke:'#f59e0b',strokeDasharray:'4 4'}}];
   versions.forEach((version,index)=>{
     const y=firstY+index*rowGap;
     const header=pkg?.versions[version]?.header?.trim()||'';
@@ -97,18 +113,18 @@ function graphForProject(project:ProjectState){
     );
     if(research&&research.status!=='idle'){
       const imageUrl=research.imageSearchUrl||`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(research.query||header)}`;
-      nodes.push({id:`image-search-${version}`,type:'researchLink',position:{x:315,y:y-38},data:{label:'Google Bildsuche',url:imageUrl,kind:'image',version}});
+      nodes.push({id:`image-search-${version}`,type:'researchLink',position:{x:318,y:y-30},data:{label:'Google Bildsuche',url:imageUrl,kind:'image',version}});
       edges.push({id:`e-image-${version}`,source:ids.news,sourceHandle:'research-top',target:`image-search-${version}`,type:'smoothstep',style:{stroke:'#60a5fa'}});
       if(research.status==='searching'){
-        nodes.push({id:`research-loading-${version}`,type:'researchLink',position:{x:315,y:y+80},data:{label:'Recherche läuft …',url:'',kind:'loading',version}});
+        nodes.push({id:`research-loading-${version}`,type:'researchLink',position:{x:318,y:y+78},data:{label:'Recherche läuft …',url:'',kind:'loading',version}});
         edges.push({id:`e-loading-${version}`,source:ids.news,sourceHandle:'research-bottom',target:`research-loading-${version}`,type:'smoothstep',animated:true,style:{stroke:'#60a5fa'}});
       }else if(research.status==='error'){
-        nodes.push({id:`research-error-${version}`,type:'researchLink',position:{x:315,y:y+80},data:{label:'Suche nicht verfügbar',url:'',kind:'error',version}});
+        nodes.push({id:`research-error-${version}`,type:'researchLink',position:{x:318,y:y+78},data:{label:'Suche nicht verfügbar',url:'',kind:'error',version}});
         edges.push({id:`e-error-${version}`,source:ids.news,sourceHandle:'research-bottom',target:`research-error-${version}`,type:'smoothstep',style:{stroke:'#f87171'}});
       }else{
         research.links.slice(0,3).forEach((link,linkIndex)=>{
           const id=`research-${version}-${linkIndex}`;
-          nodes.push({id,type:'researchLink',position:{x:315,y:y+80+linkIndex*34},data:{label:link.title,url:link.url,kind:'result',version}});
+          nodes.push({id,type:'researchLink',position:{x:318,y:y+76+linkIndex*19},data:{label:link.title,url:link.url,kind:'result',version}});
           edges.push({id:`e-${id}`,source:ids.news,sourceHandle:'research-bottom',target:id,type:'smoothstep',style:{stroke:'#60a5fa'}});
         });
       }
@@ -130,16 +146,20 @@ function Workflow(){
   const nodeTypes=useMemo(()=>({module:FlowNode,researchLink:ResearchLinkNode}),[]);
   const versions=useMemo(()=>availableVersionKeys(project.newsPackage),[project.newsPackage]);
   const totalClips=useMemo(()=>versions.reduce((sum,key)=>sum+(project.versionFlows[key]?.timeline.length||0),0),[versions,project.versionFlows]);
+  const visibleAssetCount=useMemo(()=>activeAssets(project).length,[project.assets]);
+  const depotCount=useMemo(()=>depotAssets(project).length,[project.assets]);
 
   const refreshGraph=useCallback((nextProject:ProjectState)=>{
-    const next=graphForProject(nextProject);setNodes(next.nodes);setEdges(next.edges);
+    const next=graphForProject(nextProject);
+    setNodes(current=>next.nodes.map(node=>{const previous=current.find(item=>item.id===node.id);return previous?{...node,position:previous.position}:node}));
+    setEdges(next.edges);
   },[]);
 
   useEffect(()=>{if(project.workflowRevision===0)return;refreshGraph(project);const first=availableVersionKeys(project.newsPackage)[0];setSelected(first?`news-${first}`:'input');window.setTimeout(()=>reactFlow.fitView({padding:.12,duration:350}),0)},[project.workflowRevision]);
   useEffect(()=>{if(project.workflowRevision===0)return;refreshGraph(project)},[project.assets,project.versionFlows,project.research,project.newsPackage]);
 
   useEffect(()=>{
-    const handler=(event:Event)=>{
+    const voiceHandler=(event:Event)=>{
       const detail=(event as CustomEvent<{version:VersionKey;file:File}>).detail;
       if(!detail?.version||!detail.file)return;
       const file=detail.file;
@@ -151,7 +171,15 @@ function Workflow(){
         return {...current,assets:[asset,...current.assets.filter(item=>item.id!==existing)],versionFlows:{...current.versionFlows,[detail.version]:{timeline:current.versionFlows[detail.version]?.timeline||[],voiceoverAssetId:asset.id}}};
       });
     };
-    window.addEventListener('studio-voiceover-drop',handler);return()=>window.removeEventListener('studio-voiceover-drop',handler);
+    const depotHandler=(event:Event)=>{
+      const files=(event as CustomEvent<{files:File[]}>).detail?.files||[];
+      const images=files.filter(file=>file.type.startsWith('image/'));
+      if(!images.length){window.alert('Das Foto-Depot nimmt nur Bilddateien an.');return;}
+      setProject(current=>({...current,assets:[...images.map(file=>({id:uid('depot'),kind:'image' as const,name:file.name,url:URL.createObjectURL(file),mime:file.type,size:file.size,source:'photo-depot'})),...current.assets]}));
+    };
+    window.addEventListener('studio-voiceover-drop',voiceHandler);
+    window.addEventListener('photo-depot-drop',depotHandler);
+    return()=>{window.removeEventListener('studio-voiceover-drop',voiceHandler);window.removeEventListener('photo-depot-drop',depotHandler)};
   },[]);
 
   const runResearch=async()=>{
@@ -198,9 +226,9 @@ function Workflow(){
 
   const onConnect=(c:Connection)=>{if(!c.source||!c.target)return;const source=nodes.find(n=>n.id===c.source) as Node<NodeData>|undefined;const target=nodes.find(n=>n.id===c.target) as Node<NodeData>|undefined;if(source?.type==='researchLink'||target?.type==='researchLink')return;setEdges(cur=>addEdge({...c,type:'smoothstep'},cur))};
 
-  return <div className="app-shell"><header className="appbar"><div className="brand"><span className="brandmark">PM</span><div><strong>Projektmanagement</strong><small>{project.newsPackage?.meta.topic||'Neues Projekt'}</small></div></div><div className="project-meta">{project.newsPackage?<><span className="status-dot ok"/>{versions.length} Flow{versions.length===1?'':'s'} · {project.assets.length} Assets · {totalClips} Clips</>:<><span className="status-dot"/>JSON importieren, um zu starten</>}</div><button className="workflow-start" disabled={!project.newsPackage||researching} onClick={()=>void runResearch()}><Play size={15}/>{researching?'Workflow läuft …':'Workflow starten'}</button><button className="ghost"><Settings2 size={16}/>Tools</button></header><div className="work-area">
+  return <div className="app-shell"><header className="appbar"><div className="brand"><span className="brandmark">PM</span><div><strong>Projektmanagement</strong><small>{project.newsPackage?.meta.topic||'Neues Projekt'}</small></div></div><div className="project-meta">{project.newsPackage?<><span className="status-dot ok"/>{versions.length} Flow{versions.length===1?'':'s'} · {visibleAssetCount} Assets{depotCount?` · ${depotCount} im Depot`:''} · {totalClips} Clips</>:<><span className="status-dot"/>JSON importieren, um zu starten</>}</div><button className="workflow-start" disabled={!project.newsPackage||researching} onClick={()=>void runResearch()}><Play size={15}/>{researching?'Workflow läuft …':'Workflow starten'}</button><button className="ghost"><Settings2 size={16}/>Tools</button></header><div className="work-area">
     <aside className="module-library"><div className="library-title"><b>Bausteine</b><span>Drag & Drop</span></div><div className="library-search"><Search size={15}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Suchen…"/></div>{(['Flow','Tool','Optional'] as const).map(cat=><section key={cat}><h4>{cat==='Tool'?'Werkzeuge':cat}</h4>{filtered.filter(m=>m.category===cat).map(m=>{const existing=nodes.find(n=>(n.data as NodeData).moduleId===m.moduleId&&(m.versioned?(n.data as NodeData).version===project.activeVersion:true));return <button className={`module-item ${cat==='Tool'?'tool-item':''}`} draggable={cat!=='Tool'} key={m.moduleId} onDragStart={e=>{if(cat==='Tool')return;e.dataTransfer.setData('application/module',m.moduleId);e.dataTransfer.effectAllowed='move'}} onClick={()=>{if(existing&&existing.type==='module')openNode(existing as Node<NodeData>)}}>{cat!=='Tool'&&<GripVertical size={14}/>}<i style={{background:m.color}}>{m.icon}</i><div><strong>{m.label}</strong><span>{m.description}</span></div></button>})}</section>)}</aside>
-    <main ref={wrapper} className="flow-canvas" onDrop={onDrop} onDragOver={e=>{e.preventDefault();e.dataTransfer.dropEffect='move'}}><ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={(c:NodeChange[])=>setNodes(n=>applyNodeChanges(c,n))} onEdgesChange={(c:EdgeChange[])=>setEdges(e=>applyEdgeChanges(c,e))} onConnect={onConnect} onNodeClick={(_,n)=>{if(n.type==='module')openNode(n as Node<NodeData>)}} fitView minZoom={.25} maxZoom={1.5} deleteKeyCode={['Backspace','Delete']}><Background gap={22} size={1}/><Controls showInteractive={false}/><MiniMap pannable zoomable nodeColor={n=>n.type==='researchLink'?'#93c5fd':((n.data as NodeData).color||'#94a3b8')}/></ReactFlow><div className="canvas-hint"><span>Voiceover-Datei direkt auf Studio V1/V2/V3 ziehen · Recherche und Start-Assets entstehen über „Workflow starten“</span></div></main>
+    <main ref={wrapper} className="flow-canvas" onDrop={onDrop} onDragOver={e=>{e.preventDefault();e.dataTransfer.dropEffect='move'}}><ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={(c:NodeChange[])=>setNodes(n=>applyNodeChanges(c,n))} onEdgesChange={(c:EdgeChange[])=>setEdges(e=>applyEdgeChanges(c,e))} onConnect={onConnect} onNodeClick={(_,n)=>{if(n.type==='module')openNode(n as Node<NodeData>)}} fitView minZoom={.25} maxZoom={1.5} deleteKeyCode={['Backspace','Delete']}><Background gap={22} size={1}/><Controls showInteractive={false}/><MiniMap pannable zoomable nodeColor={n=>n.type==='researchLink'?'#93c5fd':((n.data as NodeData).color||'#94a3b8')}/></ReactFlow><div className="canvas-hint"><span>Fotos auf Foto-Depot ziehen · Voiceover direkt auf Studio V1/V2/V3 · Recherche und Start-Assets über „Workflow starten“</span></div></main>
     {moduleId&&<ModuleWorkspace moduleId={moduleId} version={selectedVersion} project={project} setProject={setProject} onClose={()=>setSelected('')}/>} 
   </div></div>;
 }

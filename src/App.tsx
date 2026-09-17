@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
 import {
   addEdge,
@@ -18,7 +18,7 @@ import {
   type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Play, Save, Search } from 'lucide-react';
+import { Play, Plus, Save, Search } from 'lucide-react';
 import { ModuleConfigFields } from './components/ModuleConfigFields';
 import { libraryModules, moduleRegistry } from './core/moduleRegistry';
 import { runSingleModule, runWorkflow } from './core/runner';
@@ -26,32 +26,20 @@ import type { RunLog, WorkflowNodeData } from './core/types';
 
 const initialNodes: Node<WorkflowNodeData>[] = [
   {
-    id: '1',
+    id: 'news',
     type: 'workflow',
-    position: { x: 70, y: 70 },
-    data: {
-      moduleId: 'article-import',
-      label: 'Artikel-Link',
-      category: 'Trigger',
-      description: 'Lädt einen Artikel und stellt den Text für den Flow bereit',
-      config: { url: '' },
-    },
-  },
-  {
-    id: '2',
-    type: 'workflow',
-    position: { x: 370, y: 70 },
+    position: { x: 360, y: 70 },
     data: {
       moduleId: 'news-package',
       label: 'Newspaket',
       category: 'Produktion',
-      description: 'Extrahiert Kernthemen und erstellt Paket',
+      description: 'Übernimmt Daten aus GPT Sites oder einem manuellen Text-Input',
     },
   },
   {
-    id: '3',
+    id: 'headline',
     type: 'workflow',
-    position: { x: 680, y: 70 },
+    position: { x: 690, y: 70 },
     data: {
       moduleId: 'headline-generator',
       label: 'Schlagzeilengenerator',
@@ -61,9 +49,9 @@ const initialNodes: Node<WorkflowNodeData>[] = [
     },
   },
   {
-    id: '4',
+    id: 'research',
     type: 'workflow',
-    position: { x: 680, y: 290 },
+    position: { x: 690, y: 290 },
     data: {
       moduleId: 'research',
       label: 'Recherche',
@@ -72,9 +60,9 @@ const initialNodes: Node<WorkflowNodeData>[] = [
     },
   },
   {
-    id: '5',
+    id: 'assets',
     type: 'workflow',
-    position: { x: 370, y: 290 },
+    position: { x: 380, y: 290 },
     data: {
       moduleId: 'asset-check',
       label: 'Asset Check',
@@ -83,7 +71,7 @@ const initialNodes: Node<WorkflowNodeData>[] = [
     },
   },
   {
-    id: '6',
+    id: 'audio',
     type: 'workflow',
     position: { x: 280, y: 510 },
     data: {
@@ -94,7 +82,7 @@ const initialNodes: Node<WorkflowNodeData>[] = [
     },
   },
   {
-    id: '7',
+    id: 'video',
     type: 'workflow',
     position: { x: 560, y: 510 },
     data: {
@@ -105,7 +93,7 @@ const initialNodes: Node<WorkflowNodeData>[] = [
     },
   },
   {
-    id: '8',
+    id: 'render',
     type: 'workflow',
     position: { x: 420, y: 710 },
     data: {
@@ -116,7 +104,7 @@ const initialNodes: Node<WorkflowNodeData>[] = [
     },
   },
   {
-    id: '9',
+    id: 'ready',
     type: 'workflow',
     position: { x: 750, y: 710 },
     data: {
@@ -129,33 +117,51 @@ const initialNodes: Node<WorkflowNodeData>[] = [
 ];
 
 const initialEdges: Edge[] = [
-  { id: 'e12', source: '1', target: '2' },
-  { id: 'e23', source: '2', target: '3' },
-  { id: 'e34', source: '3', target: '4' },
-  { id: 'e45', source: '4', target: '5' },
-  { id: 'e56', source: '5', target: '6' },
-  { id: 'e57', source: '5', target: '7' },
-  { id: 'e68', source: '6', target: '8' },
-  { id: 'e78', source: '7', target: '8' },
-  { id: 'e89', source: '8', target: '9' },
+  { id: 'e-news-headline', source: 'news', target: 'headline' },
+  { id: 'e-headline-research', source: 'headline', target: 'research' },
+  { id: 'e-research-assets', source: 'research', target: 'assets' },
+  { id: 'e-assets-audio', source: 'assets', target: 'audio' },
+  { id: 'e-assets-video', source: 'assets', target: 'video' },
+  { id: 'e-audio-render', source: 'audio', target: 'render' },
+  { id: 'e-video-render', source: 'video', target: 'render' },
+  { id: 'e-render-ready', source: 'render', target: 'ready' },
 ];
 
 type ErrorWithLogs = Error & { workflowLogs?: RunLog[] };
+type WorkflowNodeExtraProps = NodeProps<Node<WorkflowNodeData>> & {
+  onAddInput: (nodeId: string) => void;
+};
 
-function WorkflowNode({ data, selected }: NodeProps<Node<WorkflowNodeData>>) {
+function WorkflowNode({ id, data, selected, onAddInput }: WorkflowNodeExtraProps) {
   const mod = moduleRegistry[data.moduleId];
+  const isInput = data.moduleId === 'flow-input';
+  const inputLabel = data.config?.inputType === 'text' ? 'Freitext' : 'GPT Sites';
+
   return (
     <div
-      className={`node ${selected ? 'selected' : ''} ${data.status || ''}`}
+      className={`node ${selected ? 'selected' : ''} ${data.status || ''} ${isInput ? 'input-node' : ''}`}
       style={{ '--accent': mod?.color || '#64748b' } as CSSProperties}
     >
       <Handle type="target" position={Position.Left} />
       <div className="node-dot" />
-      <div>
+      <div className="node-copy">
         <strong>{data.label}</strong>
-        <span>{data.category}</span>
+        <span>{isInput ? inputLabel : data.category}</span>
         <p>{data.description}</p>
       </div>
+      {data.moduleId === 'news-package' && (
+        <button
+          type="button"
+          className="add-input nodrag nopan"
+          title="Flow Input hinzufügen"
+          onClick={(event) => {
+            event.stopPropagation();
+            onAddInput(id);
+          }}
+        >
+          <Plus size={14} /> Input
+        </button>
+      )}
       <Handle type="source" position={Position.Right} />
     </div>
   );
@@ -164,8 +170,10 @@ function WorkflowNode({ data, selected }: NodeProps<Node<WorkflowNodeData>>) {
 function outputPreview(output?: Record<string, unknown>) {
   if (!output) return {};
   const preview = { ...output };
-  if (typeof preview.articleText === 'string' && preview.articleText.length > 1600) {
-    preview.articleText = `${preview.articleText.slice(0, 1600)}\n\n… [Vorschau gekürzt]`;
+  for (const key of ['rawText', 'packageText']) {
+    if (typeof preview[key] === 'string' && preview[key].length > 1600) {
+      preview[key] = `${preview[key].slice(0, 1600)}\n\n… [Vorschau gekürzt]`;
+    }
   }
   return preview;
 }
@@ -180,12 +188,54 @@ function logsFromError(error: unknown): RunLog[] {
 export default function App() {
   const [nodes, setNodes] = useState(initialNodes);
   const [edges, setEdges] = useState(initialEdges);
-  const [selectedId, setSelectedId] = useState('1');
+  const [selectedId, setSelectedId] = useState('news');
   const [logs, setLogs] = useState<RunLog[]>([]);
   const [running, setRunning] = useState(false);
   const [testing, setTesting] = useState(false);
 
-  const nodeTypes = useMemo(() => ({ workflow: WorkflowNode }), []);
+  const addInputToNode = useCallback((targetId: string) => {
+    setNodes((currentNodes) => {
+      const target = currentNodes.find((node) => node.id === targetId);
+      if (!target) return currentNodes;
+
+      const inputCount = currentNodes.filter((node) => node.data.moduleId === 'flow-input').length;
+      const id = `flow-input-${Date.now()}-${inputCount}`;
+      const newNode: Node<WorkflowNodeData> = {
+        id,
+        type: 'workflow',
+        position: {
+          x: target.position.x - 310,
+          y: target.position.y + (inputCount * 130),
+        },
+        data: {
+          moduleId: 'flow-input',
+          label: 'Flow Input',
+          category: 'Input',
+          description: 'Liefert GPT-Sites-Daten oder freien Text an das Newspaket',
+          config: {
+            inputType: 'gpt-sites-package',
+            content: '',
+          },
+        },
+      };
+
+      setEdges((currentEdges) => [
+        ...currentEdges,
+        { id: `e-${id}-${targetId}`, source: id, target: targetId },
+      ]);
+      setSelectedId(id);
+      return [...currentNodes, newNode];
+    });
+  }, []);
+
+  const WorkflowNodeComponent = useCallback(
+    (props: NodeProps<Node<WorkflowNodeData>>) => (
+      <WorkflowNode {...props} onAddInput={addInputToNode} />
+    ),
+    [addInputToNode],
+  );
+
+  const nodeTypes = useMemo(() => ({ workflow: WorkflowNodeComponent }), [WorkflowNodeComponent]);
   const selected = nodes.find((node) => node.id === selectedId) || null;
   const selectedModule = selected ? moduleRegistry[selected.data.moduleId] : null;
   const groups = libraryModules.reduce<Record<string, typeof libraryModules>>((acc, module) => {
@@ -271,7 +321,7 @@ export default function App() {
 
       <div className="toolbar">
         <div><small>Aktuelles Projekt</small><strong>Morning Briefing</strong></div>
-        <div><h2>TikTok Daily News</h2><p>Automatisierte News-Produktion für TikTok</p></div>
+        <div><h2>TikTok Daily News</h2><p>Modularer Produktions-Workflow</p></div>
         <div className="actions">
           <button><Save size={16} /> Gespeichert</button>
           <button onClick={run} disabled={running || testing} className="primary">
@@ -335,9 +385,27 @@ export default function App() {
                 onChange={updateSelectedConfig}
               />
 
+              {selected.data.moduleId === 'news-package' && (
+                <button className="add-input-inspector" onClick={() => addInputToNode(selected.id)}>
+                  <Plus size={15} /> Flow Input hinzufügen
+                </button>
+              )}
+
               <button className="module-test" onClick={testSelected} disabled={testing || running}>
                 <Play size={15} /> {testing ? 'Modul läuft...' : 'Modul testen'}
               </button>
+
+              {!!selectedModule.inputs?.length && (
+                <div className="contract">
+                  <h4>Input-Vertrag</h4>
+                  {selectedModule.inputs.map((field) => (
+                    <div key={field.key}>
+                      <code>{field.key}</code>
+                      <span>{field.type}{field.required ? ' · Pflicht' : ''}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {!!selectedModule.outputs?.length && (
                 <div className="contract">

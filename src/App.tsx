@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, DragEvent } from 'react';
 import { addEdge, applyEdgeChanges, applyNodeChanges, Background, Controls, Handle, MiniMap, Position, ReactFlow, ReactFlowProvider, useReactFlow, type Connection, type Edge, type EdgeChange, type Node, type NodeChange, type NodeProps } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import './research-overrides.css';
 import { ExternalLink, GripVertical, Play, Search, Settings2 } from 'lucide-react';
 import { ModuleWorkspace } from './components/ModuleWorkspace';
 import { availableVersionKeys, emptyProject, type NewsPackage, type ProjectAsset, type ProjectState, type VersionKey, uid } from './domain/project';
+import { generatePackageAssets } from './services/generatedAssets';
 import { searchTopLinks } from './services/research';
 
 type ModuleId='json-input'|'news-package'|'headline'|'research'|'assets'|'studio'|'img2vid';
@@ -30,17 +32,19 @@ function nodeData(moduleId:ModuleId,version?:VersionKey,shared=false,optional=fa
 
 function FlowNode({data,selected}:NodeProps<Node<NodeData>>){
   const isStudio=data.moduleId==='studio'&&Boolean(data.version);
+  const isNews=data.moduleId==='news-package';
   return <div
     className={`flow-node ${selected?'selected':''} ${data.shared?'shared-node':''} ${data.optional?'optional-node':''} ${isStudio?'studio-drop-node':''}`}
     style={{'--node':data.color} as CSSProperties}
     onDragOver={event=>{if(isStudio&&event.dataTransfer.types.includes('Files')){event.preventDefault();event.stopPropagation();event.dataTransfer.dropEffect='copy'}}}
     onDrop={event=>{if(!isStudio||!data.version||!event.dataTransfer.files.length)return;event.preventDefault();event.stopPropagation();window.dispatchEvent(new CustomEvent('studio-voiceover-drop',{detail:{version:data.version,file:event.dataTransfer.files[0]}}))}}
   >
-    <Handle type="target" position={Position.Left}/>
+    <Handle id="flow-left" type="target" position={Position.Left}/>
+    {isNews&&<><Handle id="research-top" className="research-branch-handle" type="source" position={Position.Top}/><Handle id="research-bottom" className="research-branch-handle" type="source" position={Position.Bottom}/></>}
     <div className="node-icon">{data.icon}</div>
     <div className="node-text"><strong>{data.label}</strong><span>{data.description}</span>{data.detail&&<small className="node-detail" title={data.detail}>{data.detail}</small>}{data.voiceoverName&&<small className="voiceover-node-info">🎙 {data.voiceoverName}</small>}{data.researchStatus&&<small className="research-node-info">{data.researchStatus}</small>}</div>
     {data.version&&<em className="version-chip">{data.version.toUpperCase()}</em>}{data.shared&&!data.optional&&<em className="shared-chip">GLOBAL</em>}{data.optional&&<em className="optional-chip">OPTIONAL</em>}{data.moduleId==='assets'&&typeof data.assetCount==='number'&&<em className="asset-count-chip">{data.assetCount}</em>}
-    <Handle type="source" position={Position.Right}/>
+    <Handle id="flow-right" type="source" position={Position.Right}/>
   </div>;
 }
 
@@ -62,7 +66,7 @@ function graphForProject(project:ProjectState){
   const pkg=project.newsPackage;
   const versions=availableVersionKeys(pkg);
   if(!versions.length)return baseGraph(project);
-  const rowGap=300;
+  const rowGap=250;
   const firstY=190;
   const middleY=firstY+((versions.length-1)*rowGap)/2;
   const researchDone=versions.filter(v=>project.research[v]?.status==='done').length;
@@ -85,27 +89,29 @@ function graphForProject(project:ProjectState){
       {id:ids.studio,type:'module',position:{x:930,y},data:{...nodeData('studio',version,false,false,header),voiceoverName:voice?.name}},
     );
     edges.push(
-      {id:`e-input-${version}`,source:'input',target:ids.news,type:'smoothstep'},
-      {id:`e-research-${version}`,source:'research-global',target:ids.news,type:'smoothstep',animated:research?.status==='searching',style:{stroke:'#93c5fd',strokeDasharray:'5 5'}},
-      {id:`e-news-headline-${version}`,source:ids.news,target:ids.headline,type:'smoothstep'},
-      {id:`e-headline-studio-${version}`,source:ids.headline,target:ids.studio,type:'smoothstep'},
-      {id:`e-assets-studio-${version}`,source:'assets-shared',target:ids.studio,type:'smoothstep',animated:true,style:{stroke:'#86efac',strokeDasharray:'5 5'}},
+      {id:`e-input-${version}`,source:'input',sourceHandle:'flow-right',target:ids.news,targetHandle:'flow-left',type:'smoothstep'},
+      {id:`e-research-${version}`,source:'research-global',sourceHandle:'flow-right',target:ids.news,targetHandle:'flow-left',type:'smoothstep',animated:research?.status==='searching',style:{stroke:'#93c5fd',strokeDasharray:'5 5'}},
+      {id:`e-news-headline-${version}`,source:ids.news,sourceHandle:'flow-right',target:ids.headline,targetHandle:'flow-left',type:'smoothstep'},
+      {id:`e-headline-studio-${version}`,source:ids.headline,sourceHandle:'flow-right',target:ids.studio,targetHandle:'flow-left',type:'smoothstep'},
+      {id:`e-assets-studio-${version}`,source:'assets-shared',sourceHandle:'flow-right',target:ids.studio,targetHandle:'flow-left',type:'smoothstep',animated:true,style:{stroke:'#86efac',strokeDasharray:'5 5'}},
     );
-    const imageUrl=research?.imageSearchUrl||`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(header)}`;
-    nodes.push({id:`image-search-${version}`,type:'researchLink',position:{x:305,y:y-78},data:{label:'Google Bildsuche',url:imageUrl,kind:'image',version}});
-    edges.push({id:`e-image-${version}`,source:ids.news,target:`image-search-${version}`,type:'smoothstep',style:{stroke:'#60a5fa'}});
-    if(research?.status==='searching'){
-      nodes.push({id:`research-loading-${version}`,type:'researchLink',position:{x:305,y:y+92},data:{label:'Recherche läuft …',url:'',kind:'loading',version}});
-      edges.push({id:`e-loading-${version}`,source:ids.news,target:`research-loading-${version}`,type:'smoothstep',animated:true,style:{stroke:'#60a5fa'}});
-    }else if(research?.status==='error'){
-      nodes.push({id:`research-error-${version}`,type:'researchLink',position:{x:305,y:y+92},data:{label:'Suche nicht verfügbar',url:'',kind:'error',version}});
-      edges.push({id:`e-error-${version}`,source:ids.news,target:`research-error-${version}`,type:'smoothstep',style:{stroke:'#f87171'}});
-    }else{
-      research?.links.slice(0,3).forEach((link,linkIndex)=>{
-        const id=`research-${version}-${linkIndex}`;
-        nodes.push({id,type:'researchLink',position:{x:305,y:y+92+linkIndex*45},data:{label:link.title,url:link.url,kind:'result',version}});
-        edges.push({id:`e-${id}`,source:ids.news,target:id,type:'smoothstep',style:{stroke:'#60a5fa'}});
-      });
+    if(research&&research.status!=='idle'){
+      const imageUrl=research.imageSearchUrl||`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(research.query||header)}`;
+      nodes.push({id:`image-search-${version}`,type:'researchLink',position:{x:315,y:y-38},data:{label:'Google Bildsuche',url:imageUrl,kind:'image',version}});
+      edges.push({id:`e-image-${version}`,source:ids.news,sourceHandle:'research-top',target:`image-search-${version}`,type:'smoothstep',style:{stroke:'#60a5fa'}});
+      if(research.status==='searching'){
+        nodes.push({id:`research-loading-${version}`,type:'researchLink',position:{x:315,y:y+80},data:{label:'Recherche läuft …',url:'',kind:'loading',version}});
+        edges.push({id:`e-loading-${version}`,source:ids.news,sourceHandle:'research-bottom',target:`research-loading-${version}`,type:'smoothstep',animated:true,style:{stroke:'#60a5fa'}});
+      }else if(research.status==='error'){
+        nodes.push({id:`research-error-${version}`,type:'researchLink',position:{x:315,y:y+80},data:{label:'Suche nicht verfügbar',url:'',kind:'error',version}});
+        edges.push({id:`e-error-${version}`,source:ids.news,sourceHandle:'research-bottom',target:`research-error-${version}`,type:'smoothstep',style:{stroke:'#f87171'}});
+      }else{
+        research.links.slice(0,3).forEach((link,linkIndex)=>{
+          const id=`research-${version}-${linkIndex}`;
+          nodes.push({id,type:'researchLink',position:{x:315,y:y+80+linkIndex*34},data:{label:link.title,url:link.url,kind:'result',version}});
+          edges.push({id:`e-${id}`,source:ids.news,sourceHandle:'research-bottom',target:id,type:'smoothstep',style:{stroke:'#60a5fa'}});
+        });
+      }
     }
   });
   return{nodes:nodes as Node[],edges};
@@ -151,13 +157,23 @@ function Workflow(){
   const runResearch=async()=>{
     if(!project.newsPackage||!versions.length)return;
     setResearching(true);
-    setProject(current=>({...current,research:Object.fromEntries(versions.map(version=>{const currentState=current.research[version];const query=currentState?.query||current.newsPackage?.versions[version]?.header||current.newsPackage?.meta.topic||'';return[version,{query,imageSearchUrl:`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(query)}`,links:currentState?.links||[],status:'searching' as const}]}))}));
-    await Promise.all(versions.map(async version=>{
-      const term=project.research[version]?.query||project.newsPackage?.versions[version]?.header||project.newsPackage?.meta.topic||'';
-      try{const links=await searchTopLinks(term);setProject(current=>({...current,research:{...current.research,[version]:{query:term,imageSearchUrl:`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(term)}`,links,status:'done'}}}))}
-      catch(error){setProject(current=>({...current,research:{...current.research,[version]:{query:term,imageSearchUrl:`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(term)}`,links:[],status:'error',error:error instanceof Error?error.message:String(error)}}}))}
-    }));
-    setResearching(false);
+    setProject(current=>({...current,research:Object.fromEntries(versions.map(version=>{const currentState=current.research[version];const term=currentState?.query||current.newsPackage?.versions[version]?.header||current.newsPackage?.meta.topic||'';return[version,{query:term,imageSearchUrl:`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(term)}`,links:[],status:'searching' as const}]}))}));
+    try{
+      const generated=await generatePackageAssets(project.newsPackage);
+      setProject(current=>{
+        const additions:ProjectAsset[]=[];
+        for(const asset of generated){
+          const exists=current.assets.some(item=>item.source===asset.source&&item.version===asset.version&&item.caption===asset.caption);
+          if(exists){if(asset.url.startsWith('blob:'))URL.revokeObjectURL(asset.url)}else additions.push(asset);
+        }
+        return additions.length?{...current,assets:[...additions,...current.assets]}:current;
+      });
+      await Promise.all(versions.map(async version=>{
+        const term=project.research[version]?.query||project.newsPackage?.versions[version]?.header||project.newsPackage?.meta.topic||'';
+        try{const links=await searchTopLinks(term);setProject(current=>({...current,research:{...current.research,[version]:{query:term,imageSearchUrl:`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(term)}`,links,status:'done'}}}))}
+        catch(error){setProject(current=>({...current,research:{...current.research,[version]:{query:term,imageSearchUrl:`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(term)}`,links:[],status:'error',error:error instanceof Error?error.message:String(error)}}}))}
+      }));
+    }finally{setResearching(false)}
   };
 
   const selectedNode=nodes.find(n=>n.id===selected) as Node<NodeData>|undefined;
@@ -182,9 +198,9 @@ function Workflow(){
 
   const onConnect=(c:Connection)=>{if(!c.source||!c.target)return;const source=nodes.find(n=>n.id===c.source) as Node<NodeData>|undefined;const target=nodes.find(n=>n.id===c.target) as Node<NodeData>|undefined;if(source?.type==='researchLink'||target?.type==='researchLink')return;setEdges(cur=>addEdge({...c,type:'smoothstep'},cur))};
 
-  return <div className="app-shell"><header className="appbar"><div className="brand"><span className="brandmark">PM</span><div><strong>Projektmanagement</strong><small>{project.newsPackage?.meta.topic||'Neues Projekt'}</small></div></div><div className="project-meta">{project.newsPackage?<><span className="status-dot ok"/>{versions.length} Flow{versions.length===1?'':'s'} · {project.assets.length} Assets · {totalClips} Clips</>:<><span className="status-dot"/>JSON importieren, um zu starten</>}</div><button className="workflow-start" disabled={!project.newsPackage||researching} onClick={()=>void runResearch()}><Play size={15}/>{researching?'Recherche läuft …':'Workflow starten'}</button><button className="ghost"><Settings2 size={16}/>Tools</button></header><div className="work-area">
+  return <div className="app-shell"><header className="appbar"><div className="brand"><span className="brandmark">PM</span><div><strong>Projektmanagement</strong><small>{project.newsPackage?.meta.topic||'Neues Projekt'}</small></div></div><div className="project-meta">{project.newsPackage?<><span className="status-dot ok"/>{versions.length} Flow{versions.length===1?'':'s'} · {project.assets.length} Assets · {totalClips} Clips</>:<><span className="status-dot"/>JSON importieren, um zu starten</>}</div><button className="workflow-start" disabled={!project.newsPackage||researching} onClick={()=>void runResearch()}><Play size={15}/>{researching?'Workflow läuft …':'Workflow starten'}</button><button className="ghost"><Settings2 size={16}/>Tools</button></header><div className="work-area">
     <aside className="module-library"><div className="library-title"><b>Bausteine</b><span>Drag & Drop</span></div><div className="library-search"><Search size={15}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Suchen…"/></div>{(['Flow','Tool','Optional'] as const).map(cat=><section key={cat}><h4>{cat==='Tool'?'Werkzeuge':cat}</h4>{filtered.filter(m=>m.category===cat).map(m=>{const existing=nodes.find(n=>(n.data as NodeData).moduleId===m.moduleId&&(m.versioned?(n.data as NodeData).version===project.activeVersion:true));return <button className={`module-item ${cat==='Tool'?'tool-item':''}`} draggable={cat!=='Tool'} key={m.moduleId} onDragStart={e=>{if(cat==='Tool')return;e.dataTransfer.setData('application/module',m.moduleId);e.dataTransfer.effectAllowed='move'}} onClick={()=>{if(existing&&existing.type==='module')openNode(existing as Node<NodeData>)}}>{cat!=='Tool'&&<GripVertical size={14}/>}<i style={{background:m.color}}>{m.icon}</i><div><strong>{m.label}</strong><span>{m.description}</span></div></button>})}</section>)}</aside>
-    <main ref={wrapper} className="flow-canvas" onDrop={onDrop} onDragOver={e=>{e.preventDefault();e.dataTransfer.dropEffect='move'}}><ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={(c:NodeChange[])=>setNodes(n=>applyNodeChanges(c,n))} onEdgesChange={(c:EdgeChange[])=>setEdges(e=>applyEdgeChanges(c,e))} onConnect={onConnect} onNodeClick={(_,n)=>{if(n.type==='module')openNode(n as Node<NodeData>)}} fitView minZoom={.25} maxZoom={1.5} deleteKeyCode={['Backspace','Delete']}><Background gap={22} size={1}/><Controls showInteractive={false}/><MiniMap pannable zoomable nodeColor={n=>n.type==='researchLink'?'#93c5fd':((n.data as NodeData).color||'#94a3b8')}/></ReactFlow><div className="canvas-hint"><span>Voiceover-Datei direkt auf Studio V1/V2/V3 ziehen · Recherche startet über „Workflow starten“</span></div></main>
+    <main ref={wrapper} className="flow-canvas" onDrop={onDrop} onDragOver={e=>{e.preventDefault();e.dataTransfer.dropEffect='move'}}><ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={(c:NodeChange[])=>setNodes(n=>applyNodeChanges(c,n))} onEdgesChange={(c:EdgeChange[])=>setEdges(e=>applyEdgeChanges(c,e))} onConnect={onConnect} onNodeClick={(_,n)=>{if(n.type==='module')openNode(n as Node<NodeData>)}} fitView minZoom={.25} maxZoom={1.5} deleteKeyCode={['Backspace','Delete']}><Background gap={22} size={1}/><Controls showInteractive={false}/><MiniMap pannable zoomable nodeColor={n=>n.type==='researchLink'?'#93c5fd':((n.data as NodeData).color||'#94a3b8')}/></ReactFlow><div className="canvas-hint"><span>Voiceover-Datei direkt auf Studio V1/V2/V3 ziehen · Recherche und Start-Assets entstehen über „Workflow starten“</span></div></main>
     {moduleId&&<ModuleWorkspace moduleId={moduleId} version={selectedVersion} project={project} setProject={setProject} onClose={()=>setSelected('')}/>} 
   </div></div>;
 }

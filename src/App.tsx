@@ -1,0 +1,33 @@
+import { useMemo, useState } from 'react';
+import type { CSSProperties } from 'react';
+import { addEdge, applyEdgeChanges, applyNodeChanges, Background, Controls, Handle, MiniMap, Position, ReactFlow, type Connection, type Edge, type EdgeChange, type Node, type NodeChange, type NodeProps } from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
+import { Play, Save, Search } from 'lucide-react';
+import { libraryModules, moduleRegistry } from './core/moduleRegistry';
+import { runWorkflow } from './core/runner';
+import type { RunLog, WorkflowNodeData } from './core/types';
+
+const initialNodes: Node<WorkflowNodeData>[] = [
+  { id:'1',type:'workflow',position:{x:70,y:70},data:{moduleId:'article-import',label:'Artikel-Link',category:'Trigger',description:'Startet den Workflow mit einer URL',config:{url:'https://www.tagesschau.de/'}}},
+  { id:'2',type:'workflow',position:{x:370,y:70},data:{moduleId:'news-package',label:'Newspaket',category:'Produktion',description:'Extrahiert Kernthemen und erstellt Paket'}},
+  { id:'3',type:'workflow',position:{x:680,y:70},data:{moduleId:'headline-generator',label:'Schlagzeilengenerator',category:'GPT',description:'Erstellt mehrere Hook-Varianten für TikTok',config:{variants:5}}},
+  { id:'4',type:'workflow',position:{x:680,y:290},data:{moduleId:'research',label:'Recherche',category:'Recherche',description:'Sammelt aktuelle Infos und Hintergründe'}},
+  { id:'5',type:'workflow',position:{x:370,y:290},data:{moduleId:'asset-check',label:'Asset Check',category:'Assets',description:'Prüft Bild- und Videomaterial'}},
+  { id:'6',type:'workflow',position:{x:280,y:510},data:{moduleId:'wait-audio',label:'Wait for Audio',category:'Audio',description:'Wartet auf Voiceover'}},
+  { id:'7',type:'workflow',position:{x:560,y:510},data:{moduleId:'wait-video',label:'Wait for Video',category:'Video',description:'Wartet auf Videomaterial'}},
+  { id:'8',type:'workflow',position:{x:420,y:710},data:{moduleId:'auto-render',label:'Auto Render',category:'Produktion',description:'Kombiniert Audio, Video und Untertitel'}},
+  { id:'9',type:'workflow',position:{x:750,y:710},data:{moduleId:'ready',label:'Ready',category:'Output',description:'Video ist bereit'}}
+];
+const initialEdges: Edge[]=[{id:'e12',source:'1',target:'2'},{id:'e23',source:'2',target:'3'},{id:'e34',source:'3',target:'4'},{id:'e45',source:'4',target:'5'},{id:'e56',source:'5',target:'6'},{id:'e57',source:'5',target:'7'},{id:'e68',source:'6',target:'8'},{id:'e78',source:'7',target:'8'},{id:'e89',source:'8',target:'9'}];
+
+function WorkflowNode({data,selected}:NodeProps<Node<WorkflowNodeData>>){const mod=moduleRegistry[data.moduleId];return <div className={`node ${selected?'selected':''}`} style={{'--accent':mod?.color||'#64748b'} as CSSProperties}><Handle type="target" position={Position.Left}/><div className="node-dot"/><div><strong>{data.label}</strong><span>{data.category}</span><p>{data.description}</p></div><Handle type="source" position={Position.Right}/></div>}
+
+export default function App(){
+ const [nodes,setNodes]=useState(initialNodes),[edges,setEdges]=useState(initialEdges),[selected,setSelected]=useState<Node<WorkflowNodeData>|null>(initialNodes[2]),[logs,setLogs]=useState<RunLog[]>([]),[running,setRunning]=useState(false);
+ const nodeTypes=useMemo(()=>({workflow:WorkflowNode}),[]);
+ const groups=libraryModules.reduce<Record<string,typeof libraryModules>>((acc,m)=>{(acc[m.category]??=[]).push(m);return acc},{});
+ const onNodesChange=(changes:NodeChange<Node<WorkflowNodeData>>[])=>setNodes(ns=>applyNodeChanges(changes,ns));
+ const onEdgesChange=(changes:EdgeChange[])=>setEdges(es=>applyEdgeChanges(changes,es));
+ const onConnect=(c:Connection)=>setEdges(es=>addEdge(c,es));
+ const run=async()=>{setRunning(true);setLogs([]);try{const r=await runWorkflow(nodes,edges);setLogs(r.logs);setNodes(ns=>ns.map(n=>{const status=[...r.logs].reverse().find(l=>l.nodeId===n.id)?.status||'success';return {...n,data:{...n.data,status,output:r.outputs[n.id]}}}));}catch(e){console.error(e)}finally{setRunning(false)}};
+ return <div className="app"><header><div className="brand">TikTok News Studio <b>BETA</b></div><nav>Projekte <span>Workflows</span> Medien Vorlagen Analytics</nav><div className="search"><Search size={16}/> In Projekten, Dateien, Workflows suchen ...</div></header><div className="toolbar"><div><small>Aktuelles Projekt</small><strong>Morning Briefing</strong></div><div><h2>TikTok Daily News</h2><p>Automatisierte News-Produktion für TikTok</p></div><div className="actions"><button><Save size={16}/> Gespeichert</button><button onClick={run} disabled={running} className="primary"><Play size={16}/> {running?'Läuft...':'Workflow starten'}</button></div></div><main><aside className="library"><div className="tabs"><b>Bausteine</b><span>Vorlagen</span><span>Meine Nodes</span></div><input placeholder="Bausteine suchen ..."/>{Object.entries(groups).map(([cat,mods])=><section key={cat}><h4>{cat}</h4>{mods.map(m=><div className="lib-item" key={m.id}><i style={{background:m.color}}/><div><b>{m.name}</b><small>{m.description}</small></div></div>)}</section>)}</aside><section className="canvas"><ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect} onNodeClick={(_,n)=>setSelected(n)} fitView><Background gap={18}/><Controls/><MiniMap/></ReactFlow></section><aside className="inspector">{selected&&<><div className="inspector-title"><div className="icon">✦</div><div><h3>{selected.data.label}</h3><span>{selected.data.category}</span></div></div><div className="inspector-tabs"><b>Konfiguration</b><span>Output</span><span>Hinweise</span></div><label>Modul-ID<input value={selected.data.moduleId} readOnly/></label><label>Beschreibung<textarea value={selected.data.description} readOnly/></label>{selected.data.moduleId==='article-import'&&<label>URL<input value={String(selected.data.config?.url||'')} onChange={e=>setNodes(ns=>ns.map(n=>n.id===selected.id?{...n,data:{...n.data,config:{...n.data.config,url:e.target.value}}}:n))}/></label>}{selected.data.moduleId==='headline-generator'&&<label>Varianten<input type="number" value={Number(selected.data.config?.variants||5)} onChange={e=>setNodes(ns=>ns.map(n=>n.id===selected.id?{...n,data:{...n.data,config:{...n.data.config,variants:Number(e.target.value)}}}:n))}/></label>}<div className="output"><h4>Letzter Output</h4><pre>{JSON.stringify(selected.data.output||{},null,2)}</pre></div><div className="runlog"><h4>Testlauf</h4>{logs.slice(-8).map((l,i)=><div key={i} className={`log ${l.status}`}>{l.message}</div>)}</div></>}</aside></main></div>}

@@ -1,0 +1,26 @@
+name: Build validation
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [dev-workflow-mvp]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: TypeScript + production build
+        run: npm run build

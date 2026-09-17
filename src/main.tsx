@@ -6,5 +6,6 @@ import './version-flows.css';
 import './workflow-v2.css';
 import './studio-overrides.css';
 import './polish.css';
+import './flow-research.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);

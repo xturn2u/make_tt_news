@@ -1,18 +1,16 @@
 import type { WorkflowModule } from '../../core/types';
+import { articleImportManifest } from './manifest';
+import { readArticle } from './reader';
 
 export const articleImportModule: WorkflowModule = {
-  id: 'article-import',
-  name: 'Artikel-Link',
-  category: 'Trigger',
-  description: 'Übernimmt einen Artikel-Link als Workflow-Eingang.',
-  color: '#ff4d67',
+  ...articleImportManifest,
   async execute(input, config, context) {
-    const url = String(config.url || input.url || 'https://www.tagesschau.de/');
-    context.log(`Artikel-Link übernommen: ${url}`);
-    return {
-      url,
-      articleText: `Demo-Artikelinhalt für ${url}`,
-      source: new URL(url).hostname,
-    };
+    const url = String(config.url || input.url || '').trim();
+    context.log('Artikel wird geladen und in Text umgewandelt …');
+
+    const article = await readArticle(url);
+
+    context.log(`${article.wordCount} Wörter aus ${article.source} geladen`);
+    return article;
   },
 };

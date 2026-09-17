@@ -18,7 +18,7 @@ import {
   type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Play, Plus, Save, Search } from 'lucide-react';
+import { Play, Plus, Save, Search, Trash2 } from 'lucide-react';
 import { ModuleConfigFields } from './components/ModuleConfigFields';
 import { libraryModules, moduleRegistry } from './core/moduleRegistry';
 import { runSingleModule, runWorkflow } from './core/runner';
@@ -33,7 +33,7 @@ const initialNodes: Node<WorkflowNodeData>[] = [
       moduleId: 'news-package',
       label: 'Newspaket',
       category: 'Produktion',
-      description: 'Übernimmt Daten aus GPT Sites oder einem manuellen Text-Input',
+      description: 'Übernimmt ein vorhandenes Newspaket oder einen manuellen Text-Input',
     },
   },
   {
@@ -130,12 +130,15 @@ const initialEdges: Edge[] = [
 type ErrorWithLogs = Error & { workflowLogs?: RunLog[] };
 type WorkflowNodeExtraProps = NodeProps<Node<WorkflowNodeData>> & {
   onAddInput: (nodeId: string) => void;
+  onRemoveInput: (nodeId: string) => void;
+  canAddInput: (nodeId: string) => boolean;
 };
 
-function WorkflowNode({ id, data, selected, onAddInput }: WorkflowNodeExtraProps) {
+function WorkflowNode({ id, data, selected, onAddInput, onRemoveInput, canAddInput }: WorkflowNodeExtraProps) {
   const mod = moduleRegistry[data.moduleId];
   const isInput = data.moduleId === 'flow-input';
   const inputLabel = data.config?.inputType === 'text' ? 'Freitext' : 'GPT Sites';
+  const inputAvailable = data.moduleId === 'news-package' ? canAddInput(id) : false;
 
   return (
     <div
@@ -149,17 +152,33 @@ function WorkflowNode({ id, data, selected, onAddInput }: WorkflowNodeExtraProps
         <span>{isInput ? inputLabel : data.category}</span>
         <p>{data.description}</p>
       </div>
+
+      {isInput && (
+        <button
+          type="button"
+          className="remove-input nodrag nopan"
+          title="Flow Input entfernen"
+          onClick={(event) => {
+            event.stopPropagation();
+            onRemoveInput(id);
+          }}
+        >
+          <Trash2 size={13} />
+        </button>
+      )}
+
       {data.moduleId === 'news-package' && (
         <button
           type="button"
-          className="add-input nodrag nopan"
-          title="Flow Input hinzufügen"
+          className={`add-input nodrag nopan ${!inputAvailable ? 'input-present' : ''}`}
+          title={inputAvailable ? 'Flow Input hinzufügen' : 'Es ist bereits ein Input verbunden'}
+          disabled={!inputAvailable}
           onClick={(event) => {
             event.stopPropagation();
-            onAddInput(id);
+            if (inputAvailable) onAddInput(id);
           }}
         >
-          <Plus size={14} /> Input
+          {inputAvailable ? <><Plus size={14} /> Input</> : '1 Input'}
         </button>
       )}
       <Handle type="source" position={Position.Right} />
@@ -193,51 +212,80 @@ export default function App() {
   const [running, setRunning] = useState(false);
   const [testing, setTesting] = useState(false);
 
-  const addInputToNode = useCallback((targetId: string) => {
-    setNodes((currentNodes) => {
-      const target = currentNodes.find((node) => node.id === targetId);
-      if (!target) return currentNodes;
-
-      const inputCount = currentNodes.filter((node) => node.data.moduleId === 'flow-input').length;
-      const id = `flow-input-${Date.now()}-${inputCount}`;
-      const newNode: Node<WorkflowNodeData> = {
-        id,
-        type: 'workflow',
-        position: {
-          x: target.position.x - 310,
-          y: target.position.y + (inputCount * 130),
-        },
-        data: {
-          moduleId: 'flow-input',
-          label: 'Flow Input',
-          category: 'Input',
-          description: 'Liefert GPT-Sites-Daten oder freien Text an das Newspaket',
-          config: {
-            inputType: 'gpt-sites-package',
-            content: '',
-          },
-        },
-      };
-
-      setEdges((currentEdges) => [
-        ...currentEdges,
-        { id: `e-${id}-${targetId}`, source: id, target: targetId },
-      ]);
-      setSelectedId(id);
-      return [...currentNodes, newNode];
+  const incomingInputFor = useCallback((targetId: string) => {
+    return edges.find((edge) => {
+      if (edge.target !== targetId) return false;
+      const source = nodes.find((node) => node.id === edge.source);
+      return source?.data.moduleId === 'flow-input';
     });
-  }, []);
+  }, [edges, nodes]);
+
+  const canAddInputToNode = useCallback((targetId: string) => {
+    const target = nodes.find((node) => node.id === targetId);
+    if (target?.data.moduleId !== 'news-package') return false;
+    return !incomingInputFor(targetId);
+  }, [incomingInputFor, nodes]);
+
+  const addInputToNode = useCallback((targetId: string) => {
+    if (!canAddInputToNode(targetId)) return;
+
+    const target = nodes.find((node) => node.id === targetId);
+    if (!target) return;
+
+    const id = `flow-input-${Date.now()}`;
+    const newNode: Node<WorkflowNodeData> = {
+      id,
+      type: 'workflow',
+      position: {
+        x: target.position.x - 310,
+        y: target.position.y,
+      },
+      data: {
+        moduleId: 'flow-input',
+        label: 'Flow Input',
+        category: 'Input',
+        description: 'Liefert genau einen Eingang an das Newspaket',
+        config: {
+          inputType: 'gpt-sites-package',
+          content: '',
+        },
+      },
+    };
+
+    setNodes((current) => [...current, newNode]);
+    setEdges((current) => [
+      ...current,
+      { id: `e-${id}-${targetId}`, source: id, target: targetId },
+    ]);
+    setSelectedId(id);
+  }, [canAddInputToNode, nodes]);
+
+  const removeInput = useCallback((nodeId: string) => {
+    const targetId = edges.find((edge) => edge.source === nodeId)?.target;
+    setNodes((current) => current.filter((node) => node.id !== nodeId));
+    setEdges((current) => current.filter((edge) => edge.source !== nodeId && edge.target !== nodeId));
+    setSelectedId(targetId && nodes.some((node) => node.id === targetId) ? targetId : 'news');
+  }, [edges, nodes]);
 
   const WorkflowNodeComponent = useCallback(
     (props: NodeProps<Node<WorkflowNodeData>>) => (
-      <WorkflowNode {...props} onAddInput={addInputToNode} />
+      <WorkflowNode
+        {...props}
+        onAddInput={addInputToNode}
+        onRemoveInput={removeInput}
+        canAddInput={canAddInputToNode}
+      />
     ),
-    [addInputToNode],
+    [addInputToNode, removeInput, canAddInputToNode],
   );
 
   const nodeTypes = useMemo(() => ({ workflow: WorkflowNodeComponent }), [WorkflowNodeComponent]);
   const selected = nodes.find((node) => node.id === selectedId) || null;
   const selectedModule = selected ? moduleRegistry[selected.data.moduleId] : null;
+  const selectedHasInput = selected?.data.moduleId === 'news-package'
+    ? !canAddInputToNode(selected.id)
+    : false;
+
   const groups = libraryModules.reduce<Record<string, typeof libraryModules>>((acc, module) => {
     (acc[module.category] ??= []).push(module);
     return acc;
@@ -247,8 +295,20 @@ export default function App() {
     setNodes((current) => applyNodeChanges(changes, current));
   const onEdgesChange = (changes: EdgeChange[]) =>
     setEdges((current) => applyEdgeChanges(changes, current));
-  const onConnect = (connection: Connection) =>
+  const onConnect = (connection: Connection) => {
+    if (!connection.target) return;
+    const target = nodes.find((node) => node.id === connection.target);
+    if (target?.data.moduleId === 'news-package' && edges.some((edge) => edge.target === connection.target)) {
+      setLogs([{
+        nodeId: target.id,
+        moduleId: target.data.moduleId,
+        status: 'error',
+        message: 'Newspaket erlaubt genau einen Input.',
+      }]);
+      return;
+    }
     setEdges((current) => addEdge(connection, current));
+  };
 
   const applyLogsToNodes = (runLogs: RunLog[], outputs?: Record<string, Record<string, unknown>>) => {
     setNodes((current) => current.map((node) => {
@@ -386,8 +446,18 @@ export default function App() {
               />
 
               {selected.data.moduleId === 'news-package' && (
-                <button className="add-input-inspector" onClick={() => addInputToNode(selected.id)}>
-                  <Plus size={15} /> Flow Input hinzufügen
+                <button
+                  className="add-input-inspector"
+                  onClick={() => addInputToNode(selected.id)}
+                  disabled={selectedHasInput}
+                >
+                  {selectedHasInput ? '1 Input verbunden' : <><Plus size={15} /> Flow Input hinzufügen</>}
+                </button>
+              )}
+
+              {selected.data.moduleId === 'flow-input' && (
+                <button className="remove-input-inspector" onClick={() => removeInput(selected.id)}>
+                  <Trash2 size={15} /> Flow Input entfernen
                 </button>
               )}
 

@@ -19,6 +19,10 @@ export type ModuleConfigField = {
   max?: number;
   step?: number;
   options?: Array<{ label: string; value: string }>;
+  showWhen?: {
+    key: string;
+    equals: string | number | boolean;
+  };
 };
 
 export type ModuleDataField = {

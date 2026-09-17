@@ -143,7 +143,7 @@ export function createResearchState(pkg: NewsPackage | null): Partial<Record<Ver
     const query = version.header || pkg.meta.topic;
     return [key, {
       query,
-      imageSearchUrl: `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(query)}`,
+      imageSearchUrl: '',
       links: [],
       status: 'idle' as const,
     }];

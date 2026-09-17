@@ -20,6 +20,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { Play, Plus, Save, Search, Trash2 } from 'lucide-react';
 import { ModuleConfigFields } from './components/ModuleConfigFields';
+import { StoredPackagePicker } from './components/StoredPackagePicker';
 import { libraryModules, moduleRegistry } from './core/moduleRegistry';
 import { runSingleModule, runWorkflow } from './core/runner';
 import type { RunLog, WorkflowNodeData } from './core/types';
@@ -33,7 +34,7 @@ const initialNodes: Node<WorkflowNodeData>[] = [
       moduleId: 'news-package',
       label: 'Newspaket',
       category: 'Produktion',
-      description: 'Übernimmt ein vorhandenes Newspaket oder einen manuellen Text-Input',
+      description: 'Übernimmt ein vollständiges vorhandenes Newspaket aus genau einem Flow Input',
     },
   },
   {
@@ -137,7 +138,7 @@ type WorkflowNodeExtraProps = NodeProps<Node<WorkflowNodeData>> & {
 function WorkflowNode({ id, data, selected, onAddInput, onRemoveInput, canAddInput }: WorkflowNodeExtraProps) {
   const mod = moduleRegistry[data.moduleId];
   const isInput = data.moduleId === 'flow-input';
-  const inputLabel = data.config?.inputType === 'text' ? 'Freitext' : 'GPT Sites';
+  const inputLabel = data.config?.inputType === 'manual-package' ? 'Fallback' : 'Datenspeicher';
   const inputAvailable = data.moduleId === 'news-package' ? canAddInput(id) : false;
 
   return (
@@ -188,13 +189,7 @@ function WorkflowNode({ id, data, selected, onAddInput, onRemoveInput, canAddInp
 
 function outputPreview(output?: Record<string, unknown>) {
   if (!output) return {};
-  const preview = { ...output };
-  for (const key of ['rawText', 'packageText']) {
-    if (typeof preview[key] === 'string' && preview[key].length > 1600) {
-      preview[key] = `${preview[key].slice(0, 1600)}\n\n… [Vorschau gekürzt]`;
-    }
-  }
-  return preview;
+  return output;
 }
 
 function logsFromError(error: unknown): RunLog[] {
@@ -244,10 +239,10 @@ export default function App() {
         moduleId: 'flow-input',
         label: 'Flow Input',
         category: 'Input',
-        description: 'Liefert genau einen Eingang an das Newspaket',
+        description: 'Wählt ein vorhandenes Paket; manueller JSON-Input dient nur als Fallback',
         config: {
-          inputType: 'gpt-sites-package',
-          content: '',
+          inputType: 'stored-package',
+          packageId: '',
         },
       },
     };
@@ -366,9 +361,19 @@ export default function App() {
 
   const updateSelectedConfig = (key: string, value: unknown) => {
     if (!selected) return;
-    setNodes((current) => current.map((node) => node.id === selected.id
-      ? { ...node, data: { ...node.data, config: { ...node.data.config, [key]: value } } }
-      : node));
+    setNodes((current) => current.map((node) => {
+      if (node.id !== selected.id) return node;
+      const config = { ...node.data.config, [key]: value };
+      if (key === 'inputType') {
+        if (value === 'manual-package') {
+          delete config.packageId;
+          delete config.storedPackage;
+        } else {
+          delete config.content;
+        }
+      }
+      return { ...node, data: { ...node.data, config } };
+    }));
   };
 
   return (
@@ -444,6 +449,14 @@ export default function App() {
                 config={selected.data.config || {}}
                 onChange={updateSelectedConfig}
               />
+
+              {selected.data.moduleId === 'flow-input' && selected.data.config?.inputType !== 'manual-package' && (
+                <StoredPackagePicker
+                  packageId={typeof selected.data.config?.packageId === 'string' ? selected.data.config.packageId : ''}
+                  storedPackage={selected.data.config?.storedPackage}
+                  onChange={updateSelectedConfig}
+                />
+              )}
 
               {selected.data.moduleId === 'news-package' && (
                 <button

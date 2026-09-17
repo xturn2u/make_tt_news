@@ -51,6 +51,8 @@ export type ProjectState = {
   assets: ProjectAsset[];
   notes: string;
   versionFlows: Partial<Record<VersionKey, VersionFlowState>>;
+  /** Incremented after every JSON import so the canvas can rebuild its branches. */
+  workflowRevision: number;
 };
 
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -158,6 +160,7 @@ export const emptyProject = (): ProjectState => ({
   assets: [],
   notes: '',
   versionFlows: {},
+  workflowRevision: 0,
 });
 
 export const uid = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;

@@ -2,6 +2,16 @@ import type { Edge, Node } from '@xyflow/react';
 import type { RunLog, WorkflowNodeData } from './types';
 import { moduleRegistry } from './moduleRegistry';
 
+type WorkflowExecutionError = Error & {
+  workflowLogs?: RunLog[];
+};
+
+function withLogs(error: unknown, logs: RunLog[]): WorkflowExecutionError {
+  const wrapped: WorkflowExecutionError = error instanceof Error ? error : new Error(String(error));
+  wrapped.workflowLogs = logs;
+  return wrapped;
+}
+
 export async function runSingleModule(
   node: Node<WorkflowNodeData>,
   input: Record<string, unknown> = {},
@@ -23,9 +33,7 @@ export async function runSingleModule(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logs.push({ nodeId: node.id, moduleId: module.id, status: 'error', message });
-    const wrapped = error instanceof Error ? error : new Error(message);
-    Object.assign(wrapped, { workflowLogs: logs });
-    throw wrapped;
+    throw withLogs(error, logs);
   }
 }
 
@@ -51,7 +59,7 @@ export async function runWorkflow(nodes: Node<WorkflowNodeData>[], edges: Edge[]
       logs.push({ nodeId: node.id, moduleId: module.id, status: 'success', message: `${module.name} abgeschlossen`, output });
     } catch (error) {
       logs.push({ nodeId: node.id, moduleId: module.id, status: 'error', message: error instanceof Error ? error.message : String(error) });
-      throw error;
+      throw withLogs(error, logs);
     }
   }
   return { logs, outputs };

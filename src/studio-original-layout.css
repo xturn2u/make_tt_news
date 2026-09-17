@@ -1,0 +1,56 @@
+/* Studio geometry aligned to the original TikTok News Studio render workspace. */
+
+/* Keep the preview genuinely 9:16. The previous max-height compressed the phone vertically. */
+.studio-workspace-overlay .studio-v2{position:relative;display:grid!important;grid-template-rows:auto auto auto auto!important;gap:9px!important;max-width:1500px!important}
+.studio-workspace-overlay .studio-topbar{grid-row:1}
+.studio-workspace-overlay .studio-grid{grid-row:2;grid-template-columns:250px minmax(0,1fr)!important;gap:12px!important;align-items:start!important}
+.studio-workspace-overlay .studio-preview-panel{align-self:start!important;gap:6px!important}
+.studio-workspace-overlay .studio-phone{width:220px!important;height:auto!important;max-height:none!important;aspect-ratio:9/16!important;border-radius:22px!important;padding:7px!important}
+.studio-workspace-overlay .studio-phone canvas{width:100%!important;height:100%!important;aspect-ratio:9/16!important;display:block!important;border-radius:16px!important}
+.studio-workspace-overlay .preview-play{width:34px!important;height:34px!important;bottom:35px!important}
+.studio-workspace-overlay .preview-time{bottom:10px!important;font-size:7px!important}
+
+/* The original studio uses a compact asset strip, not large square cards. */
+.studio-workspace-overlay .studio-shared-assets{height:252px!important;min-height:0!important;max-height:252px!important;align-self:start!important}
+.studio-workspace-overlay .studio-panel-head{padding:8px 10px!important;min-height:42px!important}
+.studio-workspace-overlay .studio-asset-grid{display:grid!important;grid-template-columns:repeat(auto-fill,minmax(82px,96px))!important;grid-auto-rows:92px!important;align-content:start!important;justify-content:start!important;gap:6px!important;padding:7px!important;max-height:208px!important;overflow:auto!important}
+.studio-workspace-overlay .studio-asset-grid button{width:100%!important;height:92px!important;min-width:0!important;aspect-ratio:auto!important;padding:4px!important;border-radius:8px!important;display:grid!important;grid-template-rows:62px 18px!important;gap:3px!important;background:#fff!important}
+.studio-workspace-overlay .studio-asset-grid img,.studio-workspace-overlay .studio-asset-grid video,.studio-workspace-overlay .studio-asset-grid .asset-audio{width:100%!important;height:62px!important;aspect-ratio:auto!important;object-fit:cover!important;border-radius:5px!important}
+.studio-workspace-overlay .studio-asset-grid strong{font-size:7px!important;line-height:1.1!important;margin:0!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
+
+/* Selected clip controls belong above the lanes, as a compact context bar. */
+.studio-workspace-overlay .clip-inspector{grid-row:3!important;position:static!important;bottom:auto!important;z-index:10!important;display:grid!important;grid-template-columns:auto minmax(0,1fr)!important;gap:7px 10px!important;align-items:center!important;padding:6px 8px!important;border-radius:10px!important;box-shadow:none!important;background:#fff!important;min-height:42px!important;margin:0!important}
+.studio-workspace-overlay .clip-inspector-head{gap:8px!important;white-space:nowrap!important}
+.studio-workspace-overlay .clip-inspector-head span{font-size:7px!important}.studio-workspace-overlay .clip-inspector-head b{font-size:9px!important;max-width:180px!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
+.studio-workspace-overlay .clip-inspector-head>div:last-child{gap:4px!important}.studio-workspace-overlay .clip-inspector-head button{width:27px!important;height:27px!important;padding:0!important}
+.studio-workspace-overlay .clip-fields{display:flex!important;align-items:center!important;gap:5px!important;flex-wrap:wrap!important}
+.studio-workspace-overlay .clip-fields label{display:flex!important;align-items:center!important;gap:4px!important;font-size:7px!important;font-weight:800!important;white-space:nowrap!important}
+.studio-workspace-overlay .clip-fields label.wide{flex:1 1 210px!important;min-width:180px!important}
+.studio-workspace-overlay .clip-fields input,.studio-workspace-overlay .clip-fields select{width:78px!important;height:27px!important;padding:3px 6px!important;font-size:8px!important;border-radius:6px!important}
+.studio-workspace-overlay .clip-fields label.wide input{width:100%!important;min-width:150px!important}
+
+/* Six lanes must fit into the working viewport without vertical scrolling. */
+.studio-workspace-overlay .timeline-editor{grid-row:4!important;min-height:0!important;border-radius:10px!important}
+.studio-workspace-overlay .timeline-toolbar{height:30px!important;padding:0 8px!important}
+.studio-workspace-overlay .timeline-toolbar button{width:23px!important;height:22px!important}
+.studio-workspace-overlay .timeline-scroll{max-height:none!important;overflow:auto!important}
+.studio-workspace-overlay .timeline-content{padding-top:24px!important;padding-left:78px!important;padding-bottom:4px!important}
+.studio-workspace-overlay .timeline-ruler{left:78px!important;height:24px!important}
+.studio-workspace-overlay .timeline-ruler span{top:6px!important;font-size:7px!important}
+.studio-workspace-overlay .timeline-playhead{left:78px}
+.studio-workspace-overlay .studio-lane{height:38px!important;margin:0!important}
+.studio-workspace-overlay .studio-lane-label{left:-78px!important;width:74px!important;height:37px!important;padding:0 5px!important;font-size:8px!important}
+.studio-workspace-overlay .studio-lane-label button{width:19px!important;height:19px!important}
+.studio-workspace-overlay .studio-lane-track{height:37px!important}
+.studio-workspace-overlay .studio-clip{top:4px!important;height:29px!important;padding:0 7px!important;font-size:7px!important;border-radius:6px!important}
+.studio-workspace-overlay .clip-thumb{width:21px!important;height:21px!important}
+.studio-workspace-overlay .resize-handle{width:6px!important}
+
+/* Research results: actual text links, with enough clearance below each Newspaket card. */
+.react-flow__node[data-id^="research-v1-"],.react-flow__node[data-id^="research-v2-"],.react-flow__node[data-id^="research-v3-"]{margin-top:12px!important}
+.research-link-node{width:158px!important;min-height:14px!important;font-size:8px!important;line-height:1.1!important}
+.research-link-node a,.research-link-node>span{padding:0 1px!important;gap:3px!important}
+.research-link-node a:before{font-size:9px!important}
+
+@media(max-width:1100px){.studio-workspace-overlay .studio-grid{grid-template-columns:220px minmax(0,1fr)!important}.studio-workspace-overlay .studio-phone{width:200px!important}.studio-workspace-overlay .studio-asset-grid{grid-template-columns:repeat(auto-fill,minmax(76px,88px))!important}}
+@media(max-width:900px){.studio-workspace-overlay .studio-grid{grid-template-columns:1fr!important}.studio-workspace-overlay .studio-phone{width:190px!important}.studio-workspace-overlay .studio-shared-assets{height:220px!important;max-height:220px!important}.studio-workspace-overlay .studio-asset-grid{max-height:176px!important}.studio-workspace-overlay .clip-inspector{grid-template-columns:1fr!important}.studio-workspace-overlay .clip-fields{overflow-x:auto!important;flex-wrap:nowrap!important}}

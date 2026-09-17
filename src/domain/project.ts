@@ -9,12 +9,14 @@ export type NewsVersion = {
   hashtags: string[];
   pov_visual: PovVisual;
 };
+
+export type VersionKey = 'v1' | 'v2' | 'v3';
 export type NewsPackage = {
   source_url: string;
   meta: { topic: string; breaking: boolean };
-  versions: { v1: NewsVersion; v2: NewsVersion; v3: NewsVersion };
+  versions: Partial<Record<VersionKey, NewsVersion>>;
 };
-export type VersionKey = 'v1' | 'v2' | 'v3';
+
 export type AssetKind = 'image' | 'video' | 'audio' | 'headline' | 'banner' | 'export';
 export type ProjectAsset = {
   id: string;
@@ -24,7 +26,9 @@ export type ProjectAsset = {
   mime?: string;
   size?: number;
   source?: string;
+  version?: VersionKey;
 };
+
 export type TimelineLane = 'banner' | 'main' | 'broll' | 'headline' | 'text' | 'sound';
 export type TimelineClip = {
   id: string;
@@ -35,12 +39,18 @@ export type TimelineClip = {
   duration: number;
   text?: string;
 };
+
+export type VersionFlowState = {
+  timeline: TimelineClip[];
+};
+
 export type ProjectState = {
   newsPackage: NewsPackage | null;
   activeVersion: VersionKey;
+  /** Shared media pool. Every version flow reads from the same array. */
   assets: ProjectAsset[];
   notes: string;
-  timeline: TimelineClip[];
+  versionFlows: Partial<Record<VersionKey, VersionFlowState>>;
 };
 
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -91,31 +101,63 @@ function normalizeVersion(raw: unknown, index: number): NewsVersion | null {
   };
 }
 
+export const versionKeys: VersionKey[] = ['v1', 'v2', 'v3'];
+
+export function availableVersionKeys(pkg: NewsPackage | null): VersionKey[] {
+  if (!pkg) return [];
+  return versionKeys.filter(key => Boolean(pkg.versions[key]));
+}
+
+export function createVersionFlows(pkg: NewsPackage | null): Partial<Record<VersionKey, VersionFlowState>> {
+  return Object.fromEntries(availableVersionKeys(pkg).map(key => [key, { timeline: [] }])) as Partial<Record<VersionKey, VersionFlowState>>;
+}
+
 export function parsePackageJson(input: string): NewsPackage {
   let raw: unknown;
   const cleaned = input.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
   try { raw = JSON.parse(cleaned); } catch { throw new Error('Der Input ist kein gültiges JSON.'); }
   const candidate = unwrap(raw);
   if (!isObject(candidate)) throw new Error('Im JSON wurde kein Newspaket gefunden.');
+
   const source = text(candidate.source_url);
   if (!source) throw new Error('source_url fehlt.');
   try { new URL(source); } catch { throw new Error('source_url ist keine gültige URL.'); }
+
   const meta = isObject(candidate.meta) ? candidate.meta : {};
   const versionsRaw = candidate.versions;
-  let values: unknown[] = [];
-  if (Array.isArray(versionsRaw)) values = versionsRaw;
-  else if (isObject(versionsRaw)) values = [versionsRaw.v1, versionsRaw.v2, versionsRaw.v3];
-  const v1 = normalizeVersion(values[0], 1);
-  const v2 = normalizeVersion(values[1], 2);
-  const v3 = normalizeVersion(values[2], 3);
-  if (!v1 || !v2 || !v3) throw new Error('Das Paket benötigt drei Versionen mit jeweils einem Sprechtext.');
+  const versions: Partial<Record<VersionKey, NewsVersion>> = {};
+
+  if (Array.isArray(versionsRaw)) {
+    versionKeys.forEach((key, index) => {
+      const normalized = normalizeVersion(versionsRaw[index], index + 1);
+      if (normalized) versions[key] = normalized;
+    });
+  } else if (isObject(versionsRaw)) {
+    versionKeys.forEach((key, index) => {
+      const normalized = normalizeVersion(versionsRaw[key], index + 1);
+      if (normalized) versions[key] = normalized;
+    });
+  }
+
+  const count = Object.keys(versions).length;
+  if (!count) throw new Error('Das Paket enthält keine verwendbare Version mit Sprechtext.');
+
   return {
     source_url: source,
-    meta: { topic: text(meta.topic) || 'Newspaket', breaking: typeof meta.breaking === 'boolean' ? meta.breaking : false },
-    versions: { v1, v2, v3 },
+    meta: {
+      topic: text(meta.topic) || 'Newspaket',
+      breaking: typeof meta.breaking === 'boolean' ? meta.breaking : false,
+    },
+    versions,
   };
 }
 
-export const emptyProject = (): ProjectState => ({ newsPackage: null, activeVersion: 'v1', assets: [], notes: '', timeline: [] });
-export const versionKeys: VersionKey[] = ['v1', 'v2', 'v3'];
+export const emptyProject = (): ProjectState => ({
+  newsPackage: null,
+  activeVersion: 'v1',
+  assets: [],
+  notes: '',
+  versionFlows: {},
+});
+
 export const uid = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;

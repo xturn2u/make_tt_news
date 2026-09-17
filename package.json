@@ -11,6 +11,7 @@
   "dependencies": {
     "@vitejs/plugin-react": "latest",
     "@xyflow/react": "latest",
+    "html2canvas": "latest",
     "lucide-react": "latest",
     "vite": "latest",
     "react": "latest",

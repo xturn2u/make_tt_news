@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import html2canvas from 'html2canvas';
 import { Download, Newspaper, Save } from 'lucide-react';
-import type { NewsVersion, ProjectAsset, ProjectState, VersionKey } from '../domain/project';
-import { uid } from '../domain/project';
+import type { NewsPackage, NewsVersion, ProjectAsset, ProjectState, VersionKey } from '../domain/project';
+import { availableVersionKeys, uid } from '../domain/project';
 
 type Props={project:ProjectState;setProject:React.Dispatch<React.SetStateAction<ProjectState>>;version:VersionKey};
 type ArticleStyle={id:'editorial'|'news'|'boulevard';name:string;hint:string};
@@ -11,7 +11,7 @@ type ArticleCard={key:string;style:ArticleStyle;url:string;filename:string;headl
 const ORIGINAL_STAGE_WIDTH=448;
 const ORIGINAL_EXPORT_WIDTH=1016;
 const ORIGINAL_CAPTURE_SCALE=ORIGINAL_EXPORT_WIDTH/ORIGINAL_STAGE_WIDTH;
-const articleStyles:ArticleStyle[]=[
+export const articleStyles:ArticleStyle[]=[
   {id:'editorial',name:'Editorial',hint:'ruhig · hochwertig · meinungsstark'},
   {id:'news',name:'News',hint:'klar · seriös · öffentlich'},
   {id:'boulevard',name:'Boulevard',hint:'direkt · groß · aufmerksamkeitsstark'},
@@ -35,7 +35,7 @@ function wrapLines(ctx:CanvasRenderingContext2D,text:string,maxWidth:number,maxL
 function drawLines(ctx:CanvasRenderingContext2D,lines:string[],x:number,y:number,lineHeight:number){lines.forEach((line,index)=>ctx.fillText(line,x,y+index*lineHeight));return y+lines.length*lineHeight}
 function roundRect(ctx:CanvasRenderingContext2D,x:number,y:number,w:number,h:number,r:number,fill:string){ctx.beginPath();ctx.roundRect(x,y,w,h,r);ctx.fillStyle=fill;ctx.fill()}
 
-function createArticleCard(data:NewsVersion,version:VersionKey,style:ArticleStyle):ArticleCard{
+export function createArticleCard(data:NewsVersion,version:VersionKey,style:ArticleStyle):ArticleCard{
   const canvas=document.createElement('canvas');canvas.width=1080;canvas.height=1350;const ctx=canvas.getContext('2d')!;
   const card={headline:String(data.header||'Ohne Überschrift').trim(),description:cleanDescription(data.description)||'Die wichtigsten Informationen dieser Meldung kompakt zusammengefasst.',excerpt:firstWords(data.speech_text,40)||'Noch kein Sprechertext hinterlegt.',date:cardDate()};
   if(style.id==='editorial'){
@@ -50,6 +50,43 @@ function createArticleCard(data:NewsVersion,version:VersionKey,style:ArticleStyl
 
 async function dataUrlBlob(url:string){return(await fetch(url)).blob()}
 function download(url:string,name:string){const a=document.createElement('a');a.href=url;a.download=name;a.click()}
+
+function createHeadlineStage(data:NewsVersion,style:'pressespiegel'|'pressepunkt'='pressespiegel',date=todayDE()){
+  const parsed=parseHeadline(versionText(data));
+  const stage=document.createElement('div');stage.className=`headline-stage ${style==='pressepunkt'?'headline-pp':'headline-hg'}`;
+  const panel=document.createElement('div');panel.className='headline-panel';
+  const kicker=document.createElement('p');kicker.className='headline-kicker';kicker.textContent=parsed.k;
+  const h2=document.createElement('h2');h2.textContent=parsed.h||parsed.k;
+  panel.append(kicker,h2);
+  if(style==='pressespiegel'&&parsed.s){const sub=document.createElement('p');sub.className='headline-sub';sub.textContent=parsed.s;panel.append(sub)}
+  const dateRow=document.createElement('div');dateRow.className='headline-date-row';const dateSpan=document.createElement('span');dateSpan.textContent=date;dateRow.append(dateSpan);
+  stage.append(panel,dateRow);
+  return stage;
+}
+
+async function renderInitialHeadline(data:NewsVersion,version:VersionKey):Promise<ProjectAsset>{
+  const holder=document.createElement('div');holder.style.cssText='position:fixed;left:-20000px;top:0;width:448px;z-index:-1;';
+  const stage=createHeadlineStage(data,'pressespiegel');holder.append(stage);document.body.append(holder);
+  try{
+    if(document.fonts?.ready)await document.fonts.ready;
+    const canvas=await html2canvas(stage,{scale:ORIGINAL_CAPTURE_SCALE,backgroundColor:null,useCORS:true,logging:false});
+    const url=canvas.toDataURL('image/png');const blob=await dataUrlBlob(url);
+    return{id:uid('headline'),kind:'headline',name:`headline-${version}.png`,url:URL.createObjectURL(blob),mime:'image/png',size:blob.size,source:'headline-generator',version};
+  }finally{holder.remove()}
+}
+
+export async function seedGeneratedAssets(pkg:NewsPackage):Promise<ProjectAsset[]>{
+  const result:ProjectAsset[]=[];
+  for(const version of availableVersionKeys(pkg)){
+    const data=pkg.versions[version];if(!data)continue;
+    try{result.push(await renderInitialHeadline(data,version))}catch{/* newspaper assets still get created */}
+    for(const style of articleStyles){
+      const card=createArticleCard(data,version,style);const blob=await dataUrlBlob(card.url);
+      result.push({id:uid('article'),kind:'headline',name:card.filename,url:URL.createObjectURL(blob),mime:'image/png',size:blob.size,source:`article-generator:${style.id}`,version});
+    }
+  }
+  return result;
+}
 
 export function HeadlineWorkspace({project,setProject,version}:Props){
   const data=project.newsPackage?.versions[version];
@@ -74,16 +111,16 @@ export function HeadlineWorkspace({project,setProject,version}:Props){
     const base=safeName(parsed.h||parsed.k||'schlagzeile');
     return{url:canvas.toDataURL('image/png'),filename:`${base}.png`,label:parsed.h||parsed.k||'Schlagzeile'};
   };
-  const saveHeadline=async(doDownload=false)=>{setBusy(true);setMessage('');try{const rendered=await capture();if(doDownload)download(rendered.url,rendered.filename);else{const blob=await dataUrlBlob(rendered.url);const asset:ProjectAsset={id:uid('headline'),kind:'headline',name:rendered.filename,url:URL.createObjectURL(blob),mime:'image/png',size:blob.size,source:'headline-generator',version};setProject(p=>({...p,assets:[asset,...p.assets]}));setMessage('Schlagzeile als gemeinsames Asset gespeichert.')}}catch(error){setMessage(error instanceof Error?error.message:String(error))}finally{setBusy(false)}};
-  const saveArticle=async(card:ArticleCard)=>{const exists=project.assets.some(a=>a.source==='article-generator'&&a.name===card.filename);if(exists)return;const blob=await dataUrlBlob(card.url);const asset:ProjectAsset={id:uid('article'),kind:'headline',name:card.filename,url:URL.createObjectURL(blob),mime:'image/png',size:blob.size,source:'article-generator',version};setProject(p=>({...p,assets:[asset,...p.assets]}));};
-  const saveAll=async()=>{setBusy(true);try{for(const card of cards)await saveArticle(card);setMessage(`${cards.length} Zeitungsausschnitte als gemeinsame Headline-Assets gespeichert.`)}finally{setBusy(false)}};
+  const saveHeadline=async(doDownload=false)=>{setBusy(true);setMessage('');try{const rendered=await capture();if(doDownload)download(rendered.url,rendered.filename);else{const blob=await dataUrlBlob(rendered.url);const asset:ProjectAsset={id:uid('headline'),kind:'headline',name:rendered.filename,url:URL.createObjectURL(blob),mime:'image/png',size:blob.size,source:'headline-generator',version};setProject(p=>({...p,assets:[asset,...p.assets.filter(existing=>!(existing.source==='headline-generator'&&existing.version===version))]}));setMessage('Schlagzeilen-Asset dieser Version wurde aktualisiert.')}}catch(error){setMessage(error instanceof Error?error.message:String(error))}finally{setBusy(false)}};
+  const saveArticle=async(card:ArticleCard)=>{const blob=await dataUrlBlob(card.url);const source=`article-generator:${card.style.id}`;const asset:ProjectAsset={id:uid('article'),kind:'headline',name:card.filename,url:URL.createObjectURL(blob),mime:'image/png',size:blob.size,source,version};setProject(p=>({...p,assets:[asset,...p.assets.filter(existing=>!(existing.source===source&&existing.version===version))]}));};
+  const saveAll=async()=>{setBusy(true);try{for(const card of cards)await saveArticle(card);setMessage(`${cards.length} Zeitungsausschnitte als gemeinsame Headline-Assets aktualisiert.`)}finally{setBusy(false)}};
 
-  return <div className="workspace-section original-headline-workspace">
+  return <div className="workspace-section original-headline-workspace compact-headline-workspace">
     <div className="version-context"><b>{version.toUpperCase()}</b><span>{data.header}</span></div>
     <div className="segmented"><button className={style==='pressespiegel'?'active':''} onClick={()=>setStyle('pressespiegel')}>Pressespiegel</button><button className={style==='pressepunkt'?'active':''} onClick={()=>setStyle('pressepunkt')}>Pressepunkt</button></div>
     <div className="headline-options"><label className="checkline"><input type="checkbox" checked={extraEnabled} onChange={e=>setExtraEnabled(e.target.checked)}/> Zusatzthema</label>{extraEnabled&&<input value={extra} onChange={e=>setExtra(e.target.value)} placeholder="Thema, z. B. BREAKING NEWS"/>}<input value={date} onChange={e=>setDate(e.target.value)} placeholder="Datum"/></div>
     <label>Schlagzeilentext<textarea className="headline-input" value={headlineText} onChange={e=>setHeadlineText(e.target.value)}/><small>Zeile 1 = Kicker · Zeile 2 = Hauptzeile · Zeile 3 = Unterzeile</small></label>
-    <div className="headline-original-preview"><div className="headline-stage-viewport">
+    <div className="headline-original-preview compact-preview"><div className="headline-stage-viewport">
       <div ref={stageRef} className={`headline-stage ${style==='pressepunkt'?'headline-pp':'headline-hg'}`}>
         {extraEnabled&&extra.trim()&&<div className="headline-extra-row"><span>{extra.trim()}</span></div>}
         <div className="headline-panel">{style==='pressepunkt'?<><p className="headline-kicker">{parsed.k}</p><h2>{parsed.h}</h2></>:<><p className="headline-kicker">{parsed.k}</p><h2>{parsed.h||parsed.k}</h2>{parsed.s&&<p className="headline-sub">{parsed.s}</p>}</>}</div>

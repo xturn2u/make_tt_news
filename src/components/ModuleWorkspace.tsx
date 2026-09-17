@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { FileJson, ImagePlus, Maximize2, Minimize2, Trash2, Upload, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Copy, FileJson, ImagePlus, Maximize2, Minimize2, Trash2, Upload, X } from 'lucide-react';
 import type { AssetKind, NewsVersion, ProjectAsset, ProjectState, VersionKey } from '../domain/project';
 import { availableVersionKeys, createVersionFlows, parsePackageJson, uid } from '../domain/project';
 import { HeadlineWorkspace } from './HeadlineWorkspace';
@@ -37,13 +37,35 @@ function Img2VidWorkspace({project,setProject}:SharedProps){const images=project
 
 function StudioOverlay({project,setProject,version,onClose}:VersionProps&{onClose:()=>void}){
   const shellRef=useRef<HTMLDivElement>(null);
+  const available=useMemo(()=>availableVersionKeys(project.newsPackage),[project.newsPackage]);
+  const sources=available.filter(key=>key!==version);
+  const [copySource,setCopySource]=useState<VersionKey|''>(()=>sources[0]||'');
+  const [copyMessage,setCopyMessage]=useState('');
   const [browserFullscreen,setBrowserFullscreen]=useState(false);
   const data=project.newsPackage?.versions[version];
+
+  useEffect(()=>{if(copySource&&!sources.includes(copySource))setCopySource(sources[0]||'');else if(!copySource&&sources.length)setCopySource(sources[0])},[copySource,sources.join('|')]);
   useEffect(()=>{const change=()=>setBrowserFullscreen(Boolean(document.fullscreenElement));document.addEventListener('fullscreenchange',change);return()=>document.removeEventListener('fullscreenchange',change)},[]);
   useEffect(()=>()=>{if(document.fullscreenElement)void document.exitFullscreen().catch(()=>{})},[]);
-  const toggleFullscreen=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else if(shellRef.current?.requestFullscreen)await shellRef.current.requestFullscreen()}catch{/* browser may deny fullscreen outside a user gesture */}};
+
+  const toggleFullscreen=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else if(shellRef.current?.requestFullscreen)await shellRef.current.requestFullscreen()}catch{/* browser may deny fullscreen */}};
+  const copyVersion=()=>{
+    if(!copySource)return;
+    const sourceTimeline=project.versionFlows[copySource]?.timeline||[];
+    if(!sourceTimeline.length){setCopyMessage(`${copySource.toUpperCase()} enthält noch keine Studio-Inhalte.`);return;}
+    const targetTimeline=project.versionFlows[version]?.timeline||[];
+    if(targetTimeline.length&&!window.confirm(`${version.toUpperCase()} enthält bereits ${targetTimeline.length} Clips. Soll die Timeline vollständig durch ${copySource.toUpperCase()} ersetzt werden?`))return;
+    const cloned=sourceTimeline.map(clip=>({...clip,id:uid(clip.lane==='text'?'text':'clip')}));
+    setProject(current=>({...current,versionFlows:{...current.versionFlows,[version]:{timeline:cloned}}}));
+    setCopyMessage(`${sourceTimeline.length} Clips aus ${copySource.toUpperCase()} wurden 1:1 nach ${version.toUpperCase()} übernommen.`);
+  };
+
   return <div ref={shellRef} className="studio-workspace-overlay">
-    <header className="studio-workspace-header"><div className="studio-workspace-title"><span className="studio-version-badge">{version.toUpperCase()}</span><div><h2>Studio {version.toUpperCase()}</h2><p>{data?.header||'Interaktive 9:16-Produktion'}</p></div></div><div className="studio-workspace-header-actions"><button onClick={()=>void toggleFullscreen()}>{browserFullscreen?<Minimize2 size={16}/>:<Maximize2 size={16}/>}<span>{browserFullscreen?'Vollbild verlassen':'Vollbild'}</span></button><button className="studio-close" onClick={onClose}><X size={18}/><span>Schließen</span></button></div></header>
+    <header className="studio-workspace-header">
+      <div className="studio-workspace-title"><span className="studio-version-badge">{version.toUpperCase()}</span><div><h2>Studio {version.toUpperCase()}</h2><p>{data?.header||'Interaktive 9:16-Produktion'}</p></div></div>
+      <div className="studio-version-copy">{sources.length?<><span>Von Version übernehmen</span><select value={copySource} onChange={e=>{setCopySource(e.target.value as VersionKey);setCopyMessage('')}}>{sources.map(key=><option key={key} value={key}>{key.toUpperCase()} · {project.newsPackage?.versions[key]?.header||'Version'}</option>)}</select><button onClick={copyVersion}><Copy size={15}/>1:1 übernehmen</button></>:<span className="studio-version-copy-empty">Keine weitere Version vorhanden</span>}{copyMessage&&<small>{copyMessage}</small>}</div>
+      <div className="studio-workspace-header-actions"><button onClick={()=>void toggleFullscreen()}>{browserFullscreen?<Minimize2 size={16}/>:<Maximize2 size={16}/>}<span>{browserFullscreen?'Vollbild verlassen':'Vollbild'}</span></button><button className="studio-close" onClick={onClose}><X size={18}/><span>Schließen</span></button></div>
+    </header>
     <div className="studio-workspace-body"><StudioWorkspace project={project} setProject={setProject} version={version}/></div>
   </div>;
 }

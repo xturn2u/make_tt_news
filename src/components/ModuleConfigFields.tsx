@@ -13,6 +13,12 @@ function currentValue(field: ModuleConfigField, config: Record<string, unknown>)
   return field.type === 'boolean' ? false : '';
 }
 
+function visible(field: ModuleConfigField, config: Record<string, unknown>) {
+  if (!field.showWhen) return true;
+  const actual = config[field.showWhen.key];
+  return actual === field.showWhen.equals;
+}
+
 export function ModuleConfigFields({ module, config, onChange }: Props) {
   if (!module.configFields?.length) {
     return <p className="muted">Dieses Modul benötigt keine Konfiguration.</p>;
@@ -20,7 +26,7 @@ export function ModuleConfigFields({ module, config, onChange }: Props) {
 
   return (
     <>
-      {module.configFields.map((field) => {
+      {module.configFields.filter((field) => visible(field, config)).map((field) => {
         const value = currentValue(field, config);
 
         if (field.type === 'textarea') {

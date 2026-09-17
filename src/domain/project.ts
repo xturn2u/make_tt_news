@@ -42,6 +42,9 @@ export type VersionResearchState = {
 export type TimelineLane = 'banner' | 'main' | 'wan' | 'headline' | 'text' | 'sound';
 export type ClipTemplate = 'broll' | 'split' | 'story';
 export type ClipAnimation = 'news' | 'left' | 'right' | 'punch' | 'drop' | 'fade' | 'none';
+export type SlideshowMotion = 'news' | 'hard' | 'soft' | 'none';
+export type TextStyle = 'redwhite' | 'white' | 'dark';
+export type TextAlign = 'left' | 'center' | 'right';
 export type TimelineClip = {
   id: string;
   lane: TimelineLane;
@@ -58,6 +61,13 @@ export type TimelineClip = {
   scale?: number;
   rotation?: number;
   volume?: number;
+  /** Multi-image B-Roll clip ported from the original News-Slideshow optimizer. */
+  slideshowAssetIds?: string[];
+  slideshowImageDuration?: number;
+  slideshowMotion?: SlideshowMotion;
+  slideshowSourceCount?: number;
+  textStyle?: TextStyle;
+  textAlign?: TextAlign;
 };
 
 export type VersionFlowState = {

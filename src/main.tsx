@@ -8,5 +8,6 @@ import './studio-overrides.css';
 import './polish.css';
 import './flow-research.css';
 import './photo-depot.css';
+import './studio-original-layout.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);

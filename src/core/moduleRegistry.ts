@@ -1,4 +1,4 @@
-import { articleImportModule } from '../modules/article-import/module';
+import { flowInputModule } from '../modules/flow-input/module';
 import { newsPackageModule } from '../modules/news-package/module';
 import { headlineModule } from '../modules/headline-generator/module';
 import type { WorkflowModule } from './types';
@@ -12,7 +12,7 @@ const placeholder = (id: string, name: string, category: string, color: string, 
 });
 
 export const moduleRegistry: Record<string, WorkflowModule> = {
-  [articleImportModule.id]: articleImportModule,
+  [flowInputModule.id]: flowInputModule,
   [newsPackageModule.id]: newsPackageModule,
   [headlineModule.id]: headlineModule,
   research: placeholder('research', 'Recherche', 'Recherche', '#3b82f6', 'Sammelt und strukturiert Quellen und Hintergrundinformationen.'),

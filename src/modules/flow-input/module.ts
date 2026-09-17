@@ -1,67 +1,93 @@
 import type { WorkflowModule } from '../../core/types';
+import { validateNewsPackage } from '../../domain/newsPackage';
 
-function tryParseJson(value: string): unknown | undefined {
+function parseManualPackage(value: string) {
+  let parsed: unknown;
   try {
-    return JSON.parse(value);
+    parsed = JSON.parse(value);
   } catch {
-    return undefined;
+    throw new Error('Manueller Fallback muss gültiges JSON in der NewsPackage-Datenstruktur sein.');
   }
+
+  const validation = validateNewsPackage(parsed);
+  if (!validation.valid) {
+    throw new Error(`Manuelles Newspaket ist ungültig:\n- ${validation.errors.join('\n- ')}`);
+  }
+  return validation.package;
 }
 
 export const flowInputModule: WorkflowModule = {
   id: 'flow-input',
   name: 'Flow Input',
   category: 'Input',
-  description: 'Übergibt ein vorhandenes Newspaket oder freien Text an den nächsten Workflow-Schritt.',
+  description: 'Liefert genau ein vorhandenes oder manuell eingegebenes Newspaket an den Workflow.',
   color: '#0ea5e9',
-  version: '0.1.0',
+  version: '0.3.0',
   configFields: [
     {
       key: 'inputType',
-      label: 'Input-Typ',
+      label: 'Quelle',
       type: 'select',
-      defaultValue: 'gpt-sites-package',
+      defaultValue: 'stored-package',
       options: [
-        { label: 'GPT Sites · Newspaket', value: 'gpt-sites-package' },
-        { label: 'Freier Text', value: 'text' },
+        { label: 'Vorhandenes Newspaket', value: 'stored-package' },
+        { label: 'Manuelles Paket · Fallback', value: 'manual-package' },
       ],
-      description: 'Legt fest, welche Art von Inhalt an das Newspaket übergeben wird.',
+      description: 'Im Normalfall wird ein Paket aus dem bestehenden Datenspeicher verwendet.',
+    },
+    {
+      key: 'packageId',
+      label: 'Paket-ID',
+      type: 'text',
+      placeholder: 'Wird durch die Paketauswahl gesetzt',
+      description: 'Technische ID des ausgewählten vorhandenen Pakets.',
     },
     {
       key: 'content',
-      label: 'Flow Input',
+      label: 'Manuelles Newspaket · JSON',
       type: 'textarea',
-      required: true,
-      placeholder: 'Newspaket aus GPT Sites oder freien Text hier einfügen …',
-      description: 'JSON wird automatisch erkannt. Normaler Text wird unverändert weitergegeben.',
+      placeholder: '{\n  "source_url": "https://…",\n  "meta": { … },\n  "versions": { "v1": …, "v2": …, "v3": … }\n}',
+      description: 'Nur als Notlösung. Das JSON muss exakt die definierte NewsPackage-Struktur erfüllen.',
     },
   ],
   outputs: [
     { key: 'inputType', label: 'Input-Typ', type: 'string', required: true },
-    { key: 'rawText', label: 'Rohtext', type: 'string', required: true },
-    { key: 'newsPackage', label: 'Strukturiertes Newspaket', type: 'object' },
+    { key: 'newsPackage', label: 'Validiertes Newspaket', type: 'NewsPackage', required: true },
+    { key: 'packageId', label: 'Paket-ID', type: 'string' },
     { key: 'source', label: 'Quelle', type: 'string', required: true },
   ],
   async execute(_input, config, context) {
-    const inputType = String(config.inputType || 'gpt-sites-package');
-    const content = String(config.content || '').trim();
+    const inputType = String(config.inputType || 'stored-package');
 
-    if (!content) {
-      throw new Error('Flow Input ist leer. Bitte ein Newspaket oder einen Text einfügen.');
+    if (inputType === 'manual-package') {
+      const content = String(config.content || '').trim();
+      if (!content) throw new Error('Manueller Fallback ist leer. Bitte ein vollständiges NewsPackage-JSON einfügen.');
+      const newsPackage = parseManualPackage(content);
+      context.log('Manuelles Fallback-Paket validiert und übernommen');
+      return {
+        inputType,
+        newsPackage,
+        source: 'manual-fallback',
+      };
     }
 
-    const parsed = tryParseJson(content);
-    const source = inputType === 'gpt-sites-package' ? 'gpt-sites' : 'manual-text';
+    const storedPackage = config.storedPackage;
+    const packageId = String(config.packageId || '');
+    if (!storedPackage || typeof storedPackage !== 'object') {
+      throw new Error('Bitte ein vorhandenes Newspaket aus dem Datenspeicher auswählen.');
+    }
 
-    context.log(inputType === 'gpt-sites-package'
-      ? 'GPT-Sites-Newspaket als Flow Input übernommen'
-      : 'Freitext als Flow Input übernommen');
+    const validation = validateNewsPackage(storedPackage);
+    if (!validation.valid) {
+      throw new Error(`Gespeichertes Newspaket entspricht nicht dem erwarteten Vertrag:\n- ${validation.errors.join('\n- ')}`);
+    }
 
+    context.log(`Vorhandenes Newspaket${packageId ? ` ${packageId}` : ''} übernommen`);
     return {
       inputType,
-      rawText: content,
-      source,
-      ...(parsed && typeof parsed === 'object' ? { newsPackage: parsed } : {}),
+      newsPackage: validation.package,
+      packageId: packageId || undefined,
+      source: 'existing-store',
     };
   },
 };

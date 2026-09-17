@@ -20,7 +20,6 @@ import {
 import '@xyflow/react/dist/style.css';
 import { Play, Plus, Save, Search, Trash2 } from 'lucide-react';
 import { ModuleConfigFields } from './components/ModuleConfigFields';
-import { StoredPackagePicker } from './components/StoredPackagePicker';
 import { libraryModules, moduleRegistry } from './core/moduleRegistry';
 import { runSingleModule, runWorkflow } from './core/runner';
 import type { RunLog, WorkflowNodeData } from './core/types';
@@ -34,7 +33,7 @@ const initialNodes: Node<WorkflowNodeData>[] = [
       moduleId: 'news-package',
       label: 'Newspaket',
       category: 'Produktion',
-      description: 'Übernimmt ein vollständiges vorhandenes Newspaket aus genau einem Flow Input',
+      description: 'Übernimmt ein vollständiges Newspaket aus genau einem validierten JSON Flow Input',
     },
   },
   {
@@ -138,7 +137,7 @@ type WorkflowNodeExtraProps = NodeProps<Node<WorkflowNodeData>> & {
 function WorkflowNode({ id, data, selected, onAddInput, onRemoveInput, canAddInput }: WorkflowNodeExtraProps) {
   const mod = moduleRegistry[data.moduleId];
   const isInput = data.moduleId === 'flow-input';
-  const inputLabel = data.config?.inputType === 'manual-package' ? 'Fallback' : 'Datenspeicher';
+  const inputLabel = 'JSON';
   const inputAvailable = data.moduleId === 'news-package' ? canAddInput(id) : false;
 
   return (
@@ -239,10 +238,9 @@ export default function App() {
         moduleId: 'flow-input',
         label: 'Flow Input',
         category: 'Input',
-        description: 'Wählt ein vorhandenes Paket; manueller JSON-Input dient nur als Fallback',
+        description: 'Liefert genau ein vollständiges Newspaket als JSON an den Workflow',
         config: {
-          inputType: 'stored-package',
-          packageId: '',
+          content: '',
         },
       },
     };
@@ -361,19 +359,11 @@ export default function App() {
 
   const updateSelectedConfig = (key: string, value: unknown) => {
     if (!selected) return;
-    setNodes((current) => current.map((node) => {
-      if (node.id !== selected.id) return node;
-      const config = { ...node.data.config, [key]: value };
-      if (key === 'inputType') {
-        if (value === 'manual-package') {
-          delete config.packageId;
-          delete config.storedPackage;
-        } else {
-          delete config.content;
-        }
-      }
-      return { ...node, data: { ...node.data, config } };
-    }));
+    setNodes((current) => current.map((node) => (
+      node.id === selected.id
+        ? { ...node, data: { ...node.data, config: { ...node.data.config, [key]: value } } }
+        : node
+    )));
   };
 
   return (
@@ -449,14 +439,6 @@ export default function App() {
                 config={selected.data.config || {}}
                 onChange={updateSelectedConfig}
               />
-
-              {selected.data.moduleId === 'flow-input' && selected.data.config?.inputType !== 'manual-package' && (
-                <StoredPackagePicker
-                  packageId={typeof selected.data.config?.packageId === 'string' ? selected.data.config.packageId : ''}
-                  storedPackage={selected.data.config?.storedPackage}
-                  onChange={updateSelectedConfig}
-                />
-              )}
 
               {selected.data.moduleId === 'news-package' && (
                 <button

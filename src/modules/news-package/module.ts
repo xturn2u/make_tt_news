@@ -1,48 +1,45 @@
 import type { WorkflowModule } from '../../core/types';
+import { validateNewsPackage } from '../../domain/newsPackage';
 
 export const newsPackageModule: WorkflowModule = {
   id: 'news-package',
   name: 'Newspaket',
   category: 'Produktion',
-  description: 'Übernimmt ein vorhandenes GPT-Sites-Newspaket oder freien Text aus einem Flow Input.',
+  description: 'Übernimmt ein vollständiges NewsPackage aus dem Flow Input und stellt es unverändert bereit.',
   color: '#7c5cff',
-  version: '0.2.0',
+  version: '0.3.0',
   inputs: [
-    { key: 'rawText', label: 'Flow Input', type: 'string', required: true },
-    { key: 'newsPackage', label: 'Strukturiertes Newspaket', type: 'object' },
+    { key: 'newsPackage', label: 'NewsPackage', type: 'NewsPackage', required: true },
+    { key: 'packageId', label: 'Paket-ID', type: 'string' },
     { key: 'source', label: 'Quelle', type: 'string' },
   ],
   outputs: [
-    { key: 'newsPackage', label: 'Newspaket', type: 'object', required: true },
-    { key: 'packageText', label: 'Paket-Rohtext', type: 'string', required: true },
+    { key: 'newsPackage', label: 'NewsPackage', type: 'NewsPackage', required: true },
+    { key: 'source_url', label: 'Quell-URL', type: 'string', required: true },
+    { key: 'meta', label: 'Meta', type: 'object', required: true },
+    { key: 'versions', label: 'Versionen v1–v3', type: 'object', required: true },
+    { key: 'packageId', label: 'Paket-ID', type: 'string' },
     { key: 'source', label: 'Quelle', type: 'string', required: true },
-    { key: 'format', label: 'Format', type: 'string', required: true },
   ],
   async execute(input, _config, context) {
-    const rawText = String(input.rawText || '').trim();
-    const structured = input.newsPackage;
-
-    if (!rawText && (!structured || typeof structured !== 'object')) {
-      throw new Error('Newspaket benötigt einen Flow Input. Über + einen Input hinzufügen und Inhalt einfügen.');
+    const validation = validateNewsPackage(input.newsPackage);
+    if (!validation.valid) {
+      throw new Error(`Newspaket benötigt einen gültigen Flow Input:\n- ${validation.errors.join('\n- ')}`);
     }
 
-    const newsPackage = structured && typeof structured === 'object'
-      ? structured as Record<string, unknown>
-      : { rawText };
-
+    const newsPackage = validation.package;
+    const packageId = typeof input.packageId === 'string' ? input.packageId : undefined;
     const source = String(input.source || 'workflow-input');
-    const format = structured && typeof structured === 'object' ? 'structured' : 'text';
 
-    context.log(format === 'structured'
-      ? 'Strukturiertes Newspaket übernommen'
-      : 'Text-Input als Newspaket übernommen');
+    context.log(`Newspaket "${newsPackage.meta.topic}" übernommen`);
 
     return {
-      ...newsPackage,
       newsPackage,
-      packageText: rawText || JSON.stringify(newsPackage),
+      source_url: newsPackage.source_url,
+      meta: newsPackage.meta,
+      versions: newsPackage.versions,
+      packageId,
       source,
-      format,
       importedAt: new Date().toISOString(),
     };
   },

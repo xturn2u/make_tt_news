@@ -1,0 +1,11 @@
+.flow-node{position:relative}
+.flow-node.shared-node{border-style:dashed;background:linear-gradient(135deg,#f0fdf4 0%,#ffffff 72%)}
+.version-chip,.shared-chip{position:absolute;right:10px;top:8px;margin:0!important;font-style:normal;font-size:9px!important;font-weight:800;line-height:1;padding:4px 6px!important;border-radius:999px;background:#eef2ff!important;color:#4338ca!important;letter-spacing:.04em}
+.shared-chip{background:#dcfce7!important;color:#15803d!important}
+.version-context{display:flex;align-items:center;gap:9px;padding:9px 11px;margin-bottom:14px;border:1px solid #e0e7ff;border-radius:10px;background:#f8faff}
+.version-context b{display:inline-grid;place-items:center;min-width:34px;height:24px;padding:0 8px;border-radius:7px;background:#4338ca;color:#fff;font-size:11px;letter-spacing:.05em}
+.version-context span{font-size:12px;color:#64748b}
+.version-context.studio-version{margin:0 0 12px}
+.shared-callout{border-color:#bbf7d0!important;background:#f0fdf4!important}
+.shared-callout b{color:#166534}
+.shared-callout span{color:#3f6212}

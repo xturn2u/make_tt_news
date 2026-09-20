@@ -1,0 +1,325 @@
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
+use serde::Serialize;
+use serde_json::{json, Value};
+use std::{
+    env,
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+use tauri::Manager;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SystemStatus {
+    platform: String,
+    ffmpeg_available: bool,
+    ffmpeg_path: Option<String>,
+    say_available: bool,
+    ollama_available: bool,
+    ollama_models: Vec<String>,
+    data_dir: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MediaResult {
+    title: String,
+    thumb_url: String,
+    original_url: String,
+    page_url: String,
+    license: String,
+    artist: String,
+}
+
+#[tauri::command]
+async fn system_status(app: tauri::AppHandle) -> Result<SystemStatus, String> {
+    let ffmpeg = resolve_binary("ffmpeg");
+    let say = Path::new("/usr/bin/say").exists();
+    let data_dir = ensure_data_dir(&app)?;
+    let (ollama_available, ollama_models) = ollama_models().await;
+
+    Ok(SystemStatus {
+        platform: env::consts::OS.to_string(),
+        ffmpeg_available: ffmpeg.is_some(),
+        ffmpeg_path: ffmpeg.map(|p| p.to_string_lossy().to_string()),
+        say_available: say,
+        ollama_available,
+        ollama_models,
+        data_dir: data_dir.to_string_lossy().to_string(),
+    })
+}
+
+#[tauri::command]
+async fn ollama_generate(model: String, prompt: String) -> Result<String, String> {
+    if model.trim().is_empty() {
+        return Err("Kein Ollama-Modell ausgewählt.".into());
+    }
+    let client = http_client()?;
+    let response = client
+        .post("http://127.0.0.1:11434/api/chat")
+        .json(&json!({
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": false
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Ollama nicht erreichbar: {e}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("Ollama HTTP {status}: {body}"));
+    }
+    let body: Value = response.json().await.map_err(|e| e.to_string())?;
+    body.get("message")
+        .and_then(|v| v.get("content"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| "Ollama hat keinen Sprechertext geliefert.".into())
+}
+
+#[tauri::command]
+async fn wikimedia_search(query: String, limit: u8) -> Result<Vec<MediaResult>, String> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Err("Leerer Bild-Suchbegriff.".into());
+    }
+    let client = http_client()?;
+    let limit_value = limit.clamp(1, 20).to_string();
+    let response = client
+        .get("https://commons.wikimedia.org/w/api.php")
+        .query(&[
+            ("action", "query"),
+            ("generator", "search"),
+            ("gsrsearch", query),
+            ("gsrnamespace", "6"),
+            ("gsrlimit", limit_value.as_str()),
+            ("prop", "imageinfo"),
+            ("iiprop", "url|extmetadata"),
+            ("iiurlwidth", "900"),
+            ("format", "json"),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("Wikimedia nicht erreichbar: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Wikimedia HTTP {}", response.status()));
+    }
+    let body: Value = response.json().await.map_err(|e| e.to_string())?;
+    let mut results = Vec::new();
+    if let Some(pages) = body.pointer("/query/pages").and_then(Value::as_object) {
+        for page in pages.values() {
+            let info = page.pointer("/imageinfo/0").unwrap_or(&Value::Null);
+            let thumb = info.get("thumburl").or_else(|| info.get("url")).and_then(Value::as_str).unwrap_or("");
+            let original = info.get("url").or_else(|| info.get("thumburl")).and_then(Value::as_str).unwrap_or("");
+            if thumb.is_empty() || original.is_empty() { continue; }
+            results.push(MediaResult {
+                title: page.get("title").and_then(Value::as_str).unwrap_or("Datei").trim_start_matches("File:").to_string(),
+                thumb_url: thumb.to_string(),
+                original_url: original.to_string(),
+                page_url: info.get("descriptionurl").and_then(Value::as_str).unwrap_or("").to_string(),
+                license: metadata(info, "LicenseShortName").or_else(|| metadata(info, "License")).unwrap_or_else(|| "Unbekannt".into()),
+                artist: strip_html(&metadata(info, "Artist").or_else(|| metadata(info, "Credit")).unwrap_or_else(|| "Unbekannt".into())),
+            });
+        }
+    }
+    Ok(results)
+}
+
+#[tauri::command]
+fn create_tts(app: tauri::AppHandle, text: String, voice: String) -> Result<String, String> {
+    if !Path::new("/usr/bin/say").exists() {
+        return Err("macOS TTS (/usr/bin/say) ist nicht verfügbar.".into());
+    }
+    if text.trim().is_empty() {
+        return Err("Kein Sprechertext vorhanden.".into());
+    }
+    let dir = ensure_data_dir(&app)?;
+    let output = dir.join(format!("voice-{}.aiff", timestamp()));
+    let mut cmd = Command::new("/usr/bin/say");
+    if !voice.trim().is_empty() {
+        cmd.arg("-v").arg(voice.trim());
+    }
+    let status = cmd.arg("-o").arg(&output).arg(text).status().map_err(|e| e.to_string())?;
+    if !status.success() {
+        return Err(format!("macOS TTS fehlgeschlagen (Exit {:?}).", status.code()));
+    }
+    Ok(output.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn render_vertical_video(app: tauri::AppHandle, image_url: String, audio_path: String) -> Result<String, String> {
+    let ffmpeg = resolve_binary("ffmpeg").ok_or_else(|| "FFmpeg wurde nicht gefunden. Installiere es mit: brew install ffmpeg".to_string())?;
+    if !Path::new(&audio_path).exists() {
+        return Err("TTS-Audiodatei wurde nicht gefunden.".into());
+    }
+    let dir = ensure_data_dir(&app)?;
+    let image_path = dir.join(format!("visual-{}.img", timestamp()));
+    download_to(&image_url, &image_path).await?;
+    let output = dir.join(format!("tiktok-news-{}.mp4", timestamp()));
+
+    let filter = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1";
+    let common = [
+        "-y", "-loop", "1", "-i",
+    ];
+    let mut command = Command::new(&ffmpeg);
+    command.args(common).arg(&image_path).arg("-i").arg(&audio_path)
+        .args(["-vf", filter, "-c:v", "libx264", "-tune", "stillimage", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart"])
+        .arg(&output);
+    let first = command.output().map_err(|e| format!("FFmpeg Startfehler: {e}"))?;
+
+    if !first.status.success() {
+        let mut fallback = Command::new(&ffmpeg);
+        fallback.args(common).arg(&image_path).arg("-i").arg(&audio_path)
+            .args(["-vf", filter, "-c:v", "h264_videotoolbox", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart"])
+            .arg(&output);
+        let second = fallback.output().map_err(|e| format!("FFmpeg Fallback-Startfehler: {e}"))?;
+        if !second.status.success() {
+            let stderr = String::from_utf8_lossy(&second.stderr);
+            return Err(format!("FFmpeg Renderfehler: {}", tail(&stderr, 900)));
+        }
+    }
+    let _ = fs::remove_file(&image_path);
+    Ok(output.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn replicate_predict(token: String, version: String, input_json: String) -> Result<Value, String> {
+    if token.trim().is_empty() || version.trim().is_empty() {
+        return Err("Replicate Token und Modellkennung sind erforderlich.".into());
+    }
+    let input: Value = serde_json::from_str(&input_json).map_err(|e| format!("Ungültiges Replicate Input JSON: {e}"))?;
+    if !input.is_object() {
+        return Err("Replicate Input muss ein JSON-Objekt sein.".into());
+    }
+    let client = http_client()?;
+    let response = client
+        .post("https://api.replicate.com/v1/predictions")
+        .header(AUTHORIZATION, format!("Bearer {}", token.trim()))
+        .header(CONTENT_TYPE, "application/json")
+        .header("Prefer", "wait=60")
+        .json(&json!({ "version": version.trim(), "input": input }))
+        .send()
+        .await
+        .map_err(|e| format!("Replicate nicht erreichbar: {e}"))?;
+    let status = response.status();
+    let text = response.text().await.map_err(|e| e.to_string())?;
+    let body: Value = serde_json::from_str(&text).unwrap_or_else(|_| json!({"raw": text}));
+    if !status.is_success() {
+        return Err(format!("Replicate HTTP {status}: {body}"));
+    }
+    Ok(body)
+}
+
+#[tauri::command]
+fn reveal_in_finder(path: String) -> Result<(), String> {
+    if !Path::new(&path).exists() {
+        return Err("Datei existiert nicht.".into());
+    }
+    let status = Command::new("/usr/bin/open").arg("-R").arg(path).status().map_err(|e| e.to_string())?;
+    if status.success() { Ok(()) } else { Err("Finder konnte nicht geöffnet werden.".into()) }
+}
+
+async fn ollama_models() -> (bool, Vec<String>) {
+    let client = match http_client() { Ok(c) => c, Err(_) => return (false, vec![]) };
+    let response = match client.get("http://127.0.0.1:11434/api/tags").timeout(Duration::from_secs(2)).send().await {
+        Ok(r) if r.status().is_success() => r,
+        _ => return (false, vec![]),
+    };
+    let body: Value = match response.json().await { Ok(v) => v, Err(_) => return (true, vec![]) };
+    let models = body.get("models").and_then(Value::as_array).map(|items| {
+        items.iter().filter_map(|m| m.get("name").and_then(Value::as_str).map(str::to_string)).collect()
+    }).unwrap_or_default();
+    (true, models)
+}
+
+fn http_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .user_agent("TikTokNewsStudioLocal/0.1 (+https://github.com/xturn2u/make_tt_news)")
+        .timeout(Duration::from_secs(75))
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+fn ensure_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("outputs");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+async fn download_to(url: &str, target: &Path) -> Result<(), String> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("Nur HTTP(S)-Medienquellen sind zulässig.".into());
+    }
+    let response = http_client()?.get(url).header(USER_AGENT, "TikTokNewsStudioLocal/0.1").send().await.map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("Mediendownload HTTP {}", response.status()));
+    }
+    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
+    if bytes.len() > 80 * 1024 * 1024 {
+        return Err("Bilddatei ist größer als 80 MB.".into());
+    }
+    fs::write(target, &bytes).map_err(|e| e.to_string())
+}
+
+fn metadata(info: &Value, key: &str) -> Option<String> {
+    info.get("extmetadata")?.get(key)?.get("value")?.as_str().map(str::to_string)
+}
+
+fn strip_html(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut in_tag = false;
+    for ch in input.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => { in_tag = false; out.push(' '); },
+            _ if !in_tag => out.push(ch),
+            _ => {}
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn resolve_binary(name: &str) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(path) = env::var_os("PATH") {
+        candidates.extend(env::split_paths(&path).map(|p| p.join(name)));
+    }
+    candidates.extend([
+        PathBuf::from(format!("/opt/homebrew/bin/{name}")),
+        PathBuf::from(format!("/usr/local/bin/{name}")),
+        PathBuf::from(format!("/usr/bin/{name}")),
+    ]);
+    candidates.into_iter().find(|p| p.is_file())
+}
+
+fn timestamp() -> u128 {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()
+}
+
+fn tail(value: &str, max: usize) -> String {
+    let chars: Vec<char> = value.chars().collect();
+    if chars.len() <= max { value.to_string() } else { chars[chars.len()-max..].iter().collect() }
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            system_status,
+            ollama_generate,
+            wikimedia_search,
+            create_tts,
+            render_vertical_video,
+            replicate_predict,
+            reveal_in_finder
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running TikTok News Studio Local");
+}

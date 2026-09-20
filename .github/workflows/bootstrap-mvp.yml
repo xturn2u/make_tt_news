@@ -23,7 +23,7 @@ jobs:
       - name: Restore MVP source tree
         shell: bash
         run: |
-          base64 --decode mvp-bootstrap.b64 > /tmp/mvp.tar.gz
+          base64 -d -i mvp-bootstrap.b64 -o /tmp/mvp.tar.gz
           tar -xzf /tmp/mvp.tar.gz
 
       - uses: actions/setup-node@v4

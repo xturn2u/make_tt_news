@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "mvp-bootstrap.b64"
+      - "mvp-bootstrap.part-*"
       - ".github/workflows/bootstrap-mvp.yml"
   workflow_dispatch:
 
@@ -23,11 +24,23 @@ jobs:
       - name: Restore MVP source tree
         shell: bash
         run: |
-          cat mvp-bootstrap.part-* > /tmp/mvp.b64
-          test "$(wc -c < /tmp/mvp.b64 | tr -d ' ')" = "26068"
-          base64 -d -i /tmp/mvp.b64 -o /tmp/mvp.tar.gz
-          echo "e0435af4c3888f6dae0702039ccce7907fa3972caee2b33da88d7cd2451ec237  /tmp/mvp.tar.gz" | shasum -a 256 -c -
-          tar -xzf /tmp/mvp.tar.gz
+          set -euo pipefail
+          expected_parts=(mvp-bootstrap.part-00 mvp-bootstrap.part-01 mvp-bootstrap.part-02 mvp-bootstrap.part-03 mvp-bootstrap.part-04 mvp-bootstrap.part-05 mvp-bootstrap.part-06 mvp-bootstrap.part-07)
+          for part in "${expected_parts[@]}"; do
+            test -f "$part"
+            test "$(wc -c < "$part" | tr -d ' ')" -gt 0
+          done
+          test "$(find . -maxdepth 1 -type f -name 'mvp-bootstrap.part-*' | wc -l | tr -d ' ')" = "8"
+          cat "${expected_parts[@]}" > "$RUNNER_TEMP/mvp.b64"
+          test "$(wc -c < "$RUNNER_TEMP/mvp.b64" | tr -d ' ')" = "26068"
+          base64 --decode --input "$RUNNER_TEMP/mvp.b64" --output "$RUNNER_TEMP/mvp.tar.gz"
+          echo "e0435af4c3888f6dae0702039ccce7907fa3972caee2b33da88d7cd2451ec237  $RUNNER_TEMP/mvp.tar.gz" | shasum -a 256 -c -
+          tar -tzf "$RUNNER_TEMP/mvp.tar.gz" | awk 'BEGIN { bad=0 } /^\// || /(^|\/)\.\.\// { bad=1; print "Unsafe archive path: " $0 } END { exit bad }'
+          mkdir -p "$RUNNER_TEMP/mvp-root"
+          tar -xzf "$RUNNER_TEMP/mvp.tar.gz" -C "$RUNNER_TEMP/mvp-root"
+          test -f "$RUNNER_TEMP/mvp-root/package.json"
+          test -f "$RUNNER_TEMP/mvp-root/src-tauri/Cargo.toml"
+          cp -a "$RUNNER_TEMP/mvp-root/." "$GITHUB_WORKSPACE/"
 
       - uses: actions/setup-node@v4
         with:
@@ -58,10 +71,14 @@ jobs:
       - name: Replace bootstrap with verified source
         shell: bash
         run: |
+          set -euo pipefail
           rm -f mvp-bootstrap.b64 mvp-bootstrap.part-* .github/workflows/bootstrap-mvp.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
+          # GITHUB_TOKEN cannot create or update workflow files. The source
+          # workflow is retained in the runner for a follow-up authenticated
+          # commit, while all application source is committed here.
+          git add -A -- ':!.github/workflows/build-macos.yml'
           if git diff --cached --quiet; then
             echo "No source changes to commit."
           else

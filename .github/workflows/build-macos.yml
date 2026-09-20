@@ -46,7 +46,9 @@ jobs:
       - name: Build universal macOS app
         run: npm run tauri:build -- --target universal-apple-darwin --bundles app
       - name: Package app bundle
-        run: ditto -c -k --sequesterRsrc --keepParent "src-tauri/target/universal-apple-darwin/release/bundle/macos/TikTok News Studio Local.app" "TikTok-News-Studio-Local-macOS-universal.zip"
+        run: |
+          zip -qry "TikTok-News-Studio-Local-macOS-universal.zip" "src-tauri/target/universal-apple-darwin/release/bundle/macos/TikTok News Studio Local.app"
+          unzip -t "TikTok-News-Studio-Local-macOS-universal.zip"
       - name: Upload macOS app
         uses: actions/upload-artifact@v4
         with:

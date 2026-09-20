@@ -23,7 +23,10 @@ jobs:
       - name: Restore MVP source tree
         shell: bash
         run: |
-          base64 -d -i mvp-bootstrap.b64 -o /tmp/mvp.tar.gz
+          cat mvp-bootstrap.part-* > /tmp/mvp.b64
+          test "$(wc -c < /tmp/mvp.b64 | tr -d ' ')" = "26068"
+          base64 -d -i /tmp/mvp.b64 -o /tmp/mvp.tar.gz
+          echo "e0435af4c3888f6dae0702039ccce7907fa3972caee2b33da88d7cd2451ec237  /tmp/mvp.tar.gz" | shasum -a 256 -c -
           tar -xzf /tmp/mvp.tar.gz
 
       - uses: actions/setup-node@v4
@@ -52,7 +55,7 @@ jobs:
       - name: Replace bootstrap with verified source
         shell: bash
         run: |
-          rm -f mvp-bootstrap.b64 .github/workflows/bootstrap-mvp.yml
+          rm -f mvp-bootstrap.b64 mvp-bootstrap.part-* .github/workflows/bootstrap-mvp.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A

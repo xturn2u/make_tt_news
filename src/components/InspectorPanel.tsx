@@ -1,4 +1,5 @@
 import type { Node } from '@xyflow/react';
+import { mediaFileUrl } from '../desktop';
 import type { MediaResult, NodeConfig, StudioNodeData, SystemStatus } from '../types';
 
 type Props = {

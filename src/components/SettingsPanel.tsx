@@ -2,9 +2,9 @@ import { useMemo, useState } from 'react';
 import { installFfmpeg, installOllama, MODEL_CATALOG, pullOllamaModel, type ModelCatalogItem } from '../desktop';
 import type { SystemStatus } from '../types';
 
-type Props = { health: SystemStatus | null; onRefresh: () => Promise<void>; onClose: () => void };
+type Props = { health: SystemStatus | null; logs: string[]; debugMode: boolean; onDebugChange: (enabled: boolean) => void; onRefresh: () => Promise<void>; onClose: () => void };
 
-export default function SettingsPanel({ health, onRefresh, onClose }: Props) {
+export default function SettingsPanel({ health, logs, debugMode, onDebugChange, onRefresh, onClose }: Props) {
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState('');
@@ -45,6 +45,7 @@ export default function SettingsPanel({ health, onRefresh, onClose }: Props) {
         return <article className="model-card" key={model.id}><div><strong>{model.name}</strong>{model.recommended && <em>Empfohlen</em>}<p>{model.description}</p><small>{model.size} · {installed ? 'Installiert' : 'Noch nicht installiert'}</small></div><button className={installed ? 'button ghost' : 'button primary'} disabled={installed || !!busy} onClick={() => void installModel(model)}>{busy === model.id ? 'Lädt …' : installed ? 'Installiert' : 'Installieren'}</button></article>;
       })}</div>
       <div className="settings-tool"><div><strong>FFmpeg</strong><p>Wird für den Videoexport benötigt. ContentFlow richtet es automatisch ein.</p><small>{health?.ffmpegPath ?? 'Nicht gefunden'}</small></div><button className="button primary" disabled={busy !== '' || !!health?.ffmpegAvailable} onClick={() => void setupFfmpeg()}>{busy === 'ffmpeg' ? 'Wird eingerichtet …' : health?.ffmpegAvailable ? 'Bereit' : 'Einrichten'}</button></div>
+      <div className="settings-tool debug-setting"><div><strong>Debugging Report</strong><p>Zeigt ausführliche Laufprotokolle und stellt sie zur Fehleranalyse bereit.</p><small>{debugMode ? 'Aktiv' : 'Kompakt'}</small></div><div className="debug-actions"><button className="button ghost" onClick={() => navigator.clipboard?.writeText(JSON.stringify({ exportedAt: new Date().toISOString(), logs }, null, 2))}>Report kopieren</button><label><input type="checkbox" checked={debugMode} onChange={(event) => onDebugChange(event.target.checked)} /> Aktiv</label></div></div>
       {message && <div className="settings-message">{message}</div>}
       <footer className="settings-foot">Modelle werden lokal auf diesem Mac gespeichert. Deine Artikel und Projekte verlassen die App nicht durch diesen Manager.</footer>
     </section>

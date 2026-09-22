@@ -44,14 +44,14 @@ function LibraryGroup({ category, label, onAdd }: { category: NodeCategory; labe
             event.dataTransfer.effectAllowed = 'move';
           }}
           onDoubleClick={() => onAdd(item.id)}
-          title="Auf die Arbeitsfläche ziehen"
+          title="Auf die Arbeitsfläche ziehen oder per + hinzufügen"
         >
           <span className="palette-icon">{item.icon}</span>
           <div>
             <strong>{item.title}</strong>
             <small>{item.subtitle}</small>
           </div>
-          <i>+</i>
+          <button className="palette-add" type="button" onClick={() => onAdd(item.id)} aria-label={``${item.title} hinzufügen`}>+</button>
         </div>
       ))}
     </section>

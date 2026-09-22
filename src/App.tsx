@@ -419,7 +419,21 @@ function Studio() {
     if (!project) return;
     setNodes(project.nodes); setEdges(project.edges); setModel(project.model); setProjectTitle(project.title); setSelectedNodeId(project.nodes[0]?.id ?? null); addLog(`Projekt geladen: ${project.title}`);
   }, [addLog, projects, setEdges, setNodes]);
-  const nodeTypes = useMemo(() => ({ studio: (props: any) => <StudioNode {...props} onStartFrom={startFrom} /> }), [startFrom]);
+  const saveFlowTemplate = useCallback(() => {
+    const template: StoredProject = { id: `flow-${Date.now()}`, title: projectTitle || 'Neuer Flow', nodes, edges, model, updatedAt: new Date().toISOString() };
+    setFlowTemplates((current) => [template, ...current].slice(0, 12));
+    addLog(`Flow-Vorlage gespeichert: ${template.title}`);
+  }, [addLog, edges, model, nodes, projectTitle]);
+  const loadFlowTemplate = useCallback((id: string) => {
+    const template = flowTemplates.find((item) => item.id === id);
+    if (!template) return;
+    setNodes(template.nodes); setEdges(template.edges); setModel(template.model); setProjectTitle(template.title); setSelectedNodeId(template.nodes[0]?.id ?? null); addLog(`Flow-Vorlage geladen: ${template.title}`);
+  }, [addLog, flowTemplates, setEdges, setNodes]);
+  const newEmptyFlow = useCallback(() => {
+    setNodes([]); setEdges([]); setSelectedNodeId(null); setProjectTitle('Leerer Flow'); setMemoryItems([]); addLog('Leerer Flow erstellt.');
+  }, [addLog, setEdges, setNodes]);
+  const openResult = useCallback((nodeId: string) => setResultNodeId(nodeId), []);
+  const nodeTypes = useMemo(() => ({ studio: (props: any) => <StudioNode {...props} onStartFrom={startFrom} debugStops={debugStops} breakpoint={!!breakpoints[props.id]} onToggleBreakpoint={toggleBreakpoint} /> }), [breakpoints, debugStops, startFrom, toggleBreakpoint]);
 
   const cancelFlow = useCallback(() => {
     if (!running) return;
@@ -431,6 +445,15 @@ function Studio() {
     setDebugMode(enabled);
     localStorage.setItem('contentflow.debug', String(enabled));
   }, []);
+
+  const toggleDebugStops = useCallback((enabled: boolean) => {
+    setDebugStops(enabled);
+    localStorage.setItem('contentflow.debugStops', String(enabled));
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('contentflow.flowTemplates', JSON.stringify(flowTemplates));
+  }, [flowTemplates]);
 
   const badges = useMemo(() => [
     { label: 'Local AI', ok: !!health?.ollamaAvailable },

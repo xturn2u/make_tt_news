@@ -5,13 +5,18 @@ type Props = {
   collapsed: boolean;
   onToggle: () => void;
   onAdd: (moduleId: string) => void;
+  projectTitle: string;
+  projects: Array<{ id: string; title: string }>;
+  onProjectTitleChange: (title: string) => void;
+  onLoadProject: (id: string) => void;
 };
 
-export default function NodeLibrary({ collapsed, onToggle, onAdd }: Props) {
+export default function NodeLibrary({ collapsed, onToggle, onAdd, projectTitle, projects, onProjectTitleChange, onLoadProject }: Props) {
   return (
     <aside className={`node-library ${collapsed ? 'collapsed' : ''}`}>
       <button className="library-toggle" onClick={onToggle} aria-label={collapsed ? 'Seitenmenü öffnen' : 'Seitenmenü einklappen'}>{collapsed ? '›' : '‹'}</button>
       {!collapsed && <>
+      <div className="project-store"><p className="eyebrow">PROJEKT & FLOW SPEICHER</p><input value={projectTitle} onChange={(event) => onProjectTitleChange(event.target.value)} placeholder="Projekttitel …" /><small>Automatisch lokal gespeichert</small>{projects.length > 0 && <div className="project-list">{projects.map((project) => <button type="button" key={project.id} onClick={() => onLoadProject(project.id)}>{project.title}</button>)}</div>}</div>
       <div className="library-head">
         <p className="eyebrow">MODULE</p>
         <h2>Flow-Bausteine</h2>

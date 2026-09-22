@@ -13,6 +13,7 @@ import {
   type Node
 } from '@xyflow/react';
 import InspectorPanel from './components/InspectorPanel';
+import SettingsPanel from './components/SettingsPanel';
 import NodeLibrary from './components/NodeLibrary';
 import StudioNode from './components/StudioNode';
 import {
@@ -57,6 +58,7 @@ function Studio() {
   const [health, setHealth] = useState<SystemStatus | null>(null);
   const [model, setModel] = useState('');
   const [running, setRunning] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [outputPath, setOutputPath] = useState('');
   const [logs, setLogs] = useState<string[]>(['ContentFlow Studio bereit.']);
   const { screenToFlowPosition } = useReactFlow();
@@ -327,6 +329,7 @@ function Studio() {
           ))}
         </div>
 
+        <button className="button ghost" onClick={() => setSettingsOpen(true)}>Einstellungen</button>
         <button className="button ghost" onClick={() => void refreshHealth()}>System</button>
         <button className="button primary" disabled={running} onClick={() => void runFlow()}>
           {running ? 'Flow läuft …' : '▶ Flow starten'}
@@ -397,6 +400,7 @@ function Studio() {
         onChangeConfig={updateNodeConfig}
         onDelete={deleteNode}
       />
+      {settingsOpen && <SettingsPanel health={health} onRefresh={refreshHealth} onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }

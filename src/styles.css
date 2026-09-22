@@ -635,3 +635,15 @@ button:disabled { cursor: default; opacity: .55; }
 .settings-status i{grid-row:span 2;width:8px;height:8px;margin-top:3px;border-radius:50%;background:#5b6271}.settings-status i.ready{background:#31d08b;box-shadow:0 0 12px #31d08b66}.settings-status strong{font-size:11px}.settings-status small{color:var(--muted);font-size:9px}
 .settings-search input{width:100%;height:38px;padding:0 12px;border:1px solid var(--line);border-radius:9px;outline:0;color:var(--text);background:#0a0c10;font-size:11px}
 .settings-list{display:grid;gap:8px;margin-top:10px}.model-card,.settings-tool{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:13px;border:1px solid var(--line);border-radius:10px;background:#0d1016}.model-card strong,.settings-tool strong{font-size:12px}.model-card em{margin-left:8px;padding:3px 6px;border-radius:5px;color:#bcaeff;background:#6f52ed22;font-size:8px;font-style:normal}.model-card p,.settings-tool p{margin:5px 0;color:var(--muted);font-size:10px}.model-card small,.settings-tool small{color:#7b8495;font-size:9px}.settings-tool{margin-top:14px}.settings-message{margin-top:12px;padding:10px;border-radius:8px;color:#b9c4ff;background:#5f52df18;font-size:10px}.settings-foot{margin-top:16px;color:#687183;font-size:9px;line-height:1.45}
+
+.studio-shell.library-collapsed{grid-template-columns:54px minmax(0,1fr) 330px}
+.node-library.collapsed{align-items:center;position:relative}
+.node-library.collapsed .library-toggle{margin-top:14px}
+.library-toggle{width:30px;height:30px;margin:10px 10px 0 auto;border:1px solid var(--line);border-radius:8px;color:#b7a9ff;background:#151821;font-size:20px;line-height:1}
+.library-toggle:hover{border-color:var(--line-strong);background:#1b1f2a}
+.top-cancel{border-color:rgba(255,104,117,.3)!important;color:#ff9ba5;background:rgba(255,104,117,.08)!important}
+.debug-setting{align-items:center}
+.debug-actions{display:flex;align-items:center;gap:10px}
+.debug-actions label{display:flex;align-items:center;gap:5px;color:var(--muted);font-size:10px;white-space:nowrap}
+@media (max-width:1180px){.studio-shell.library-collapsed{grid-template-columns:54px minmax(0,1fr) 285px}}
+@media (max-width:900px){.studio-shell.library-collapsed{grid-template-columns:54px minmax(0,1fr)}}

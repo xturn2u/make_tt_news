@@ -2,12 +2,16 @@ import { CATEGORIES, NODE_CATALOG } from '../flow/catalog';
 import type { NodeCategory } from '../types';
 
 type Props = {
+  collapsed: boolean;
+  onToggle: () => void;
   onAdd: (moduleId: string) => void;
 };
 
-export default function NodeLibrary({ onAdd }: Props) {
+export default function NodeLibrary({ collapsed, onToggle, onAdd }: Props) {
   return (
-    <aside className="node-library">
+    <aside className={`node-library ${collapsed ? 'collapsed' : ''}`}>
+      <button className="library-toggle" onClick={onToggle} aria-label={collapsed ? 'Seitenmenü öffnen' : 'Seitenmenü einklappen'}>{collapsed ? '›' : '‹'}</button>
+      {!collapsed && <>
       <div className="library-head">
         <p className="eyebrow">MODULE</p>
         <h2>Flow-Bausteine</h2>
@@ -19,6 +23,7 @@ export default function NodeLibrary({ onAdd }: Props) {
           <LibraryGroup key={category.id} category={category.id} label={category.label} onAdd={onAdd} />
         ))}
       </div>
+      </>}
     </aside>
   );
 }

@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import type { MediaResult, NewsArticle, ReplicateResult, SystemStatus } from './types';
 
 const inTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -62,6 +62,10 @@ export async function searchWikimedia(query: string, limit = 8): Promise<MediaRe
     }).filter((x) => x.thumbUrl);
   }
   return invoke<MediaResult[]>('wikimedia_search', { query, limit });
+}
+
+export function mediaFileUrl(path: string): string {
+  return inTauri() ? convertFileSrc(path) : path;
 }
 
 export async function createTts(text: string, voice = ''): Promise<string> {

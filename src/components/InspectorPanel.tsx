@@ -1,5 +1,5 @@
 import type { Node } from '@xyflow/react';
-import type { NodeConfig, StudioNodeData, SystemStatus } from '../types';
+import type { MediaResult, NodeConfig, StudioNodeData, SystemStatus } from '../types';
 
 type Props = {
   node: Node<StudioNodeData> | null;
@@ -9,9 +9,10 @@ type Props = {
   onStartFrom: (nodeId: string) => void;
   onGenerateVersions: (nodeId: string, count: number) => void;
   onOpenVideoEditor: (nodeId: string) => void;
+  memoryItems: MediaResult[];
 };
 
-export default function InspectorPanel({ node, health, onChangeConfig, onDelete, onStartFrom, onGenerateVersions, onOpenVideoEditor }: Props) {
+export default function InspectorPanel({ node, health, onChangeConfig, onDelete, onStartFrom, onGenerateVersions, onOpenVideoEditor, memoryItems }: Props) {
   if (!node) {
     return (
       <aside className="inspector">
@@ -57,6 +58,22 @@ export default function InspectorPanel({ node, health, onChangeConfig, onDelete,
           <ConfigField key={key} name={key} value={value} onChange={(next) => update(key, next)} />
         ))}
       </div>
+
+      {(node.data.moduleId === 'asset-search' || node.data.moduleId === 'memory-card') && (
+        <div className="inspector-memory">
+          <p className="eyebrow">{node.data.moduleId === 'asset-search' ? 'ASSET SEARCH · TREFFER' : 'MEMORY CARD · GESPEICHERT'}</p>
+          {memoryItems.length ? (
+            <div className="inspector-gallery">
+              {memoryItems.map((item) => (
+                <figure key={item.originalUrl}>
+                  <img src={item.thumbUrl} alt={item.title} />
+                  <figcaption title={item.title}>{item.title}</figcaption>
+                </figure>
+              ))}
+            </div>
+          ) : <p className="muted">Noch keine Assets übergeben.</p>}
+        </div>
+      )}
 
       {node.data.moduleId === 'script-agent' && <div className="version-generator"><p className="eyebrow">VIDEO-VARIANTEN</p><p>Erzeugt ab diesem Script Agent vollständige zusätzliche Flow-Bahnen.</p><button className="button primary" onClick={() => onGenerateVersions(node.id, Number(config.versions ?? 3))}>Varianten einfügen</button></div>}
 

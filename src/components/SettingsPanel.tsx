@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { installFfmpeg, MODEL_CATALOG, pullOllamaModel, type ModelCatalogItem } from '../desktop';
+import { installFfmpeg, installOllama, MODEL_CATALOG, pullOllamaModel, type ModelCatalogItem } from '../desktop';
 import type { SystemStatus } from '../types';
 
 type Props = { health: SystemStatus | null; onRefresh: () => Promise<void>; onClose: () => void };
@@ -13,6 +13,13 @@ export default function SettingsPanel({ health, onRefresh, onClose }: Props) {
   async function installModel(model: ModelCatalogItem) {
     setBusy(model.id); setMessage(`${model.name} wird geladen …`);
     try { await pullOllamaModel(model.id); setMessage(`${model.name} ist installiert.`); await onRefresh(); }
+    catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
+    finally { setBusy(''); }
+  }
+
+  async function setupOllama() {
+    setBusy('ollama'); setMessage('Local-AI-Runtime wird installiert …');
+    try { await installOllama(); setMessage('Ollama wurde installiert und gestartet.'); await onRefresh(); }
     catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
     finally { setBusy(''); }
   }
@@ -31,6 +38,7 @@ export default function SettingsPanel({ health, onRefresh, onClose }: Props) {
         <div><i className={health?.ollamaAvailable ? 'ready' : ''} /><strong>Local AI</strong><small>{health?.ollamaAvailable ? `${health.ollamaModels.length} Modelle erkannt` : 'Runtime nicht verbunden'}</small></div>
         <div><i className={health?.ffmpegAvailable ? 'ready' : ''} /><strong>FFmpeg</strong><small>{health?.ffmpegAvailable ? 'Installiert und bereit' : 'Noch nicht installiert'}</small></div>
       </div>
+      <div className="settings-tool"><div><strong>Local-AI-Runtime</strong><p>ContentFlow lädt Ollama direkt herunter und startet es automatisch.</p><small>{health?.ollamaAvailable ? 'Bereit' : 'Nicht eingerichtet'}</small></div><button className="button primary" disabled={busy !== '' || !!health?.ollamaAvailable} onClick={() => void setupOllama()}>{busy === 'ollama' ? 'Wird installiert …' : health?.ollamaAvailable ? 'Bereit' : 'Einrichten'}</button></div>
       <div className="settings-search"><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="KI-Modelle suchen …" /></div>
       <div className="settings-list">{models.map((model) => {
         const installed = !!health?.ollamaModels.some((name) => name === model.id || name.startsWith(model.id + ':'));

@@ -33,6 +33,16 @@ struct MediaResult {
     artist: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NewsArticle {
+    url: String,
+    title: String,
+    text: String,
+    site_name: String,
+    word_count: usize,
+}
+
 #[tauri::command]
 async fn system_status(app: tauri::AppHandle) -> Result<SystemStatus, String> {
     let ffmpeg = resolve_binary("ffmpeg");
@@ -48,6 +58,59 @@ async fn system_status(app: tauri::AppHandle) -> Result<SystemStatus, String> {
         ollama_available,
         ollama_models,
         data_dir: data_dir.to_string_lossy().to_string(),
+    })
+}
+
+#[tauri::command]
+async fn fetch_news_article(url: String) -> Result<NewsArticle, String> {
+    let url = url.trim();
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("Die News-Quelle muss eine HTTP(S)-URL sein.".into());
+    }
+
+    let parsed = reqwest::Url::parse(url).map_err(|e| format!("Ungültige URL: {e}"))?;
+    let site_name = parsed.host_str().unwrap_or("Unbekannte Quelle").trim_start_matches("www.").to_string();
+    let client = http_client()?;
+    let response = client
+        .get(parsed.clone())
+        .header(USER_AGENT, "TikTokNewsStudioLocal/0.2")
+        .send()
+        .await
+        .map_err(|e| format!("Nachrichtenquelle nicht erreichbar: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Nachrichtenquelle HTTP {}", response.status()));
+    }
+
+    if let Some(length) = response.content_length() {
+        if length > 10 * 1024 * 1024 {
+            return Err("Die Quellseite ist größer als 10 MB.".into());
+        }
+    }
+
+    let html = response.text().await.map_err(|e| format!("Quelltext konnte nicht gelesen werden: {e}"))?;
+    let title = extract_html_tag(&html, "title")
+        .map(|value| decode_entities(&strip_html(&value)))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| site_name.clone());
+
+    let main_html = best_content_section(&html);
+    let cleaned_html = remove_ignored_blocks(main_html);
+    let text = decode_entities(&strip_html(&cleaned_html));
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let text = truncate_chars(&text, 45_000);
+
+    if text.chars().count() < 120 {
+        return Err("Auf der Seite konnte kein ausreichender Artikeltext erkannt werden.".into());
+    }
+
+    let word_count = text.split_whitespace().count();
+    Ok(NewsArticle {
+        url: parsed.to_string(),
+        title,
+        text,
+        site_name,
+        word_count,
     })
 }
 
@@ -268,6 +331,67 @@ async fn download_to(url: &str, target: &Path) -> Result<(), String> {
     fs::write(target, &bytes).map_err(|e| e.to_string())
 }
 
+fn best_content_section(html: &str) -> &str {
+    for tag in ["article", "main"] {
+        if let Some(section) = extract_html_tag(html, tag) {
+            let start = section.as_ptr() as usize - html.as_ptr() as usize;
+            return &html[start..start + section.len()];
+        }
+    }
+    html
+}
+
+fn extract_html_tag<'a>(html: &'a str, tag: &str) -> Option<&'a str> {
+    let lower = html.to_ascii_lowercase();
+    let open = format!("<{tag}");
+    let close = format!("</{tag}>");
+    let start = lower.find(&open)?;
+    let content_start = lower[start..].find('>')? + start + 1;
+    let end = lower[content_start..].find(&close)? + content_start;
+    Some(&html[content_start..end])
+}
+
+fn remove_ignored_blocks(input: &str) -> String {
+    let mut result = input.to_string();
+    for tag in ["script", "style", "svg", "noscript", "template"] {
+        loop {
+            let lower = result.to_ascii_lowercase();
+            let open = format!("<{tag}");
+            let close = format!("</{tag}>");
+            let Some(start) = lower.find(&open) else { break };
+            let Some(relative_end) = lower[start..].find(&close) else {
+                result.truncate(start);
+                break;
+            };
+            let end = start + relative_end + close.len();
+            result.replace_range(start..end, " ");
+        }
+    }
+    result
+}
+
+fn decode_entities(input: &str) -> String {
+    input
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#34;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&ndash;", "–")
+        .replace("&mdash;", "—")
+}
+
+fn truncate_chars(input: &str, max: usize) -> String {
+    if input.chars().count() <= max {
+        input.to_string()
+    } else {
+        input.chars().take(max).collect()
+    }
+}
+
 fn metadata(info: &Value, key: &str) -> Option<String> {
     info.get("extmetadata")?.get(key)?.get("value")?.as_str().map(str::to_string)
 }
@@ -313,6 +437,7 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             system_status,
+            fetch_news_article,
             ollama_generate,
             wikimedia_search,
             create_tts,

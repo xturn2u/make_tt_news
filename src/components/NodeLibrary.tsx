@@ -51,7 +51,7 @@ function LibraryGroup({ category, label, onAdd }: { category: NodeCategory; labe
             <strong>{item.title}</strong>
             <small>{item.subtitle}</small>
           </div>
-          <button className="palette-add" type="button" onClick={() => onAdd(item.id)} aria-label={``${item.title} hinzufügen`}>+</button>
+          <button className="palette-add" type="button" onClick={() => onAdd(item.id)} aria-label={`${item.title} hinzufügen`}>+</button>
         </div>
       ))}
     </section>

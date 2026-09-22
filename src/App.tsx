@@ -655,11 +655,26 @@ function errorText(error: unknown) {
   return String(error);
 }
 
+function readJson<T>(key: string, fallback: T): T {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || 'null');
+    return value === null ? fallback : value as T;
+  } catch { return fallback; }
+}
+
 function readStoredProjects(): StoredProject[] {
   try {
     const parsed = JSON.parse(localStorage.getItem('contentflow.projects') || '[]');
     return Array.isArray(parsed) ? parsed : [];
   } catch { return []; }
+}
+
+function ResultOverlay({ node, onClose, onSave }: { node: Node<StudioNodeData> | null; onClose: () => void; onSave: (value: string) => void }) {
+  const result = node?.data.result;
+  const [value, setValue] = useState(result?.value ?? '');
+  if (!node || !result) return null;
+  const editable = result.kind === 'text';
+  return <div className="result-overlay" role="dialog" aria-modal="true"><section className="result-panel"><div className="settings-title"><div><p className="eyebrow">SCHRITT-ERGEBNIS</p><h2>{node.data.title}</h2><span>{result.label ?? 'Ausgabe des Flow-Schritts'}</span></div><button className="button ghost" onClick={onClose}>Schließen</button></div>{result.kind === 'audio' && <audio className="result-audio" controls src={mediaFileUrl(value)} />}{result.kind === 'file' && <p className="result-file">{value}</p>}<textarea className="result-text" readOnly={!editable} value={value} onChange={(event) => setValue(event.target.value)} />{editable && <div className="editor-controls"><button className="button ghost" onClick={onClose}>Verwerfen</button><button className="button primary" onClick={() => { onSave(value); onClose(); }}>Ergebnis speichern</button></div>}</section></div>;
 }
 
 function VideoEditorOverlay({ onClose }: { onClose: () => void }) {

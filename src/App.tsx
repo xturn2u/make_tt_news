@@ -211,6 +211,11 @@ function Studio() {
         if (moduleId === 'article-reader') {
           if (!ctx.url) throw new Error('Artikel laden benötigt eine News URL.');
           ctx.article = await fetchNewsArticle(ctx.url);
+          if (!projectTitle || projectTitle === 'Neues Projekt') {
+            const generatedTitle = health?.ollamaAvailable && model ? normalizeProjectTitle(await ollamaGenerate(model, buildProjectTitlePrompt(ctx.article))) : ctx.article.title;
+            setProjectTitle(generatedTitle || ctx.article.title);
+            addLog(`Projekttitel gesetzt: ${generatedTitle || ctx.article.title}`);
+          }
           setNodeStatus(node.id, 'success', `${ctx.article.wordCount} Wörter · ${ctx.article.siteName}`);
           addLog(`Artikel geladen: ${ctx.article.title}`);
           continue;
@@ -342,7 +347,7 @@ function Studio() {
     } finally {
       setRunning(false);
     }
-  }, [addLog, edges, health, model, nodes, running, setNodeStatus, setNodes]);
+  }, [addLog, edges, health, model, nodes, projectTitle, running, setNodeStatus, setNodes]);
 
   const generateVersions = useCallback((nodeId: string, count: number) => {
     const total = Math.max(1, Math.min(5, Math.round(count)));
@@ -497,6 +502,14 @@ function Studio() {
       {settingsOpen && <SettingsPanel health={health} logs={logs} debugMode={debugMode} onDebugChange={toggleDebug} onRefresh={refreshHealth} onClose={() => setSettingsOpen(false)} />}
     </div>
   );
+}
+
+function buildProjectTitlePrompt(article: NewsArticle) {
+  return `Erzeuge einen kurzen deutschen Projekttitel mit maximal 60 Zeichen für diesen Nachrichtenartikel. Gib nur den Titel aus.\n${article.title}`;
+}
+
+function normalizeProjectTitle(value: string) {
+  return value.split('\\n')[0].replace(/^[-*#\\s]+|[-*#\\s]+$/g, '').slice(0, 60).trim();
 }
 
 function buildResearchPrompt(article: NewsArticle, instruction: string) {

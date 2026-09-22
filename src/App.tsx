@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   addEdge,
+  reconnectEdge,
   Background,
   Controls,
   MiniMap,
@@ -20,6 +21,7 @@ import StudioNode from './components/StudioNode';
 import {
   createTts,
   fetchNewsArticle,
+  mediaFileUrl,
   ollamaGenerate,
   renderVerticalVideo,
   revealInFinder,
@@ -29,7 +31,7 @@ import {
 import { createFlowNode } from './flow/catalog';
 import { DEFAULT_EDGES, DEFAULT_NODES } from './flow/defaultFlow';
 import { createExecutionPlan, validateNewsFlow } from './flow/engine';
-import type { MediaResult, NewsArticle, NodeConfig, NodeStatus, StudioNodeData, SystemStatus } from './types';
+import type { MediaResult, NewsArticle, NodeConfig, NodeStatus, StepResult, StudioNodeData, SystemStatus } from './types';
 
 type StoredProject = { id: string; title: string; nodes: Node<StudioNodeData>[]; edges: Edge[]; model: string; updatedAt: string };
 
@@ -63,6 +65,11 @@ function Studio() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [debugMode, setDebugMode] = useState(() => localStorage.getItem('contentflow.debug') === 'true');
+  const [debugStops, setDebugStops] = useState(() => localStorage.getItem('contentflow.debugStops') === 'true');
+  const [breakpoints, setBreakpoints] = useState<Record<string, boolean>>(() => readJson<Record<string, boolean>>('contentflow.breakpoints', {}));
+  const [resultNodeId, setResultNodeId] = useState<string | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [flowTemplates, setFlowTemplates] = useState<StoredProject[]>(() => readJson<StoredProject[]>('contentflow.flowTemplates', []));
   const [projectTitle, setProjectTitle] = useState(() => localStorage.getItem('contentflow.project.title') || 'Neues Projekt');
   const [projects, setProjects] = useState<StoredProject[]>(() => readStoredProjects());
   const [memoryItems, setMemoryItems] = useState<MediaResult[]>([]);
@@ -86,6 +93,20 @@ function Studio() {
 
   const addLog = useCallback((message: string) => {
     setLogs((current) => [`${new Date().toLocaleTimeString('de-DE')} · ${message}`, ...current].slice(0, 80));
+  }, []);
+
+  const setNodeResult = useCallback((nodeId: string, result?: StepResult) => {
+    setNodes((current) => current.map((node) =>
+      node.id === nodeId ? { ...node, data: { ...node.data, result } } : node
+    ));
+  }, [setNodes]);
+
+  const toggleBreakpoint = useCallback((nodeId: string) => {
+    setBreakpoints((current) => {
+      const next = { ...current, [nodeId]: !current[nodeId] };
+      localStorage.setItem('contentflow.breakpoints', JSON.stringify(next));
+      return next;
+    });
   }, []);
 
   const setNodeStatus = useCallback((nodeId: string, status: NodeStatus, detail?: string) => {
@@ -155,6 +176,10 @@ function Studio() {
 
   const onConnect = useCallback((connection: Connection) => {
     setEdges((current) => addEdge({ ...connection, animated: false }, current));
+  }, [setEdges]);
+
+  const onReconnect = useCallback((oldEdge: Edge, connection: Connection) => {
+    setEdges((current) => reconnectEdge(oldEdge, connection, current));
   }, [setEdges]);
 
   const onDrop = useCallback((event: React.DragEvent) => {

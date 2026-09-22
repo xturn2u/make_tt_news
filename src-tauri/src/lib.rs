@@ -432,11 +432,74 @@ fn tail(value: &str, max: usize) -> String {
     if chars.len() <= max { value.to_string() } else { chars[chars.len()-max..].iter().collect() }
 }
 
+
+#[tauri::command]
+async fn ollama_pull_model(model: String) -> Result<(), String> {
+    let model = model.trim();
+    if model.is_empty() { return Err("Kein Modell ausgewählt.".into()); }
+    let client = http_client()?;
+    let response = client.post("http://127.0.0.1:11434/api/pull")
+        .json(&json!({"name": model, "stream": false}))
+        .send().await
+        .map_err(|_| "Ollama ist nicht aktiv. Installiere die Local-AI-Runtime zuerst in diesem Einstellungsbereich.".to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("Modell konnte nicht geladen werden (Ollama HTTP {}).", response.status()));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn install_ollama(app: tauri::AppHandle) -> Result<String, String> {
+    let dir = ensure_data_dir(&app)?.join("runtime");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let archive = dir.join("Ollama-darwin.zip");
+    let bytes = http_client()?.get("https://ollama.com/download/Ollama-darwin.zip")
+        .send().await.map_err(|e| format!("Ollama-Download fehlgeschlagen: {e}"))?
+        .bytes().await.map_err(|e| e.to_string())?;
+    fs::write(&archive, &bytes).map_err(|e| e.to_string())?;
+    let unpack = dir.join("unpacked");
+    let _ = fs::remove_dir_all(&unpack);
+    fs::create_dir_all(&unpack).map_err(|e| e.to_string())?;
+    let status = Command::new("/usr/bin/ditto").args(["-x", "-k"]).arg(&archive).arg(&unpack).status().map_err(|e| e.to_string())?;
+    if !status.success() { return Err("Ollama-Archiv konnte nicht entpackt werden.".into()); }
+    let app_bundle = find_named_path(&unpack, "Ollama.app").ok_or("Ollama-App wurde im Download nicht gefunden.")?;
+    let home = env::var_os("HOME").ok_or("Benutzerordner nicht gefunden.")?;
+    let destination = PathBuf::from(home).join("Applications").join("Ollama.app");
+    fs::create_dir_all(destination.parent().unwrap()).map_err(|e| e.to_string())?;
+    let _ = Command::new("/usr/bin/ditto").arg(&app_bundle).arg(&destination).status();
+    let _ = Command::new("/usr/bin/open").arg("-a").arg(&destination).status();
+    Ok(destination.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn install_ffmpeg(app: tauri::AppHandle) -> Result<String, String> {
+    if let Some(path) = resolve_binary("ffmpeg") { return Ok(path.to_string_lossy().to_string()); }
+    let brew = resolve_binary("brew").ok_or("FFmpeg kann automatisch installiert werden, sobald Homebrew verfügbar ist.".to_string())?;
+    let status = Command::new(brew).args(["install", "ffmpeg"]).status().map_err(|e| format!("FFmpeg-Installation konnte nicht gestartet werden: {e}"))?;
+    if !status.success() { return Err("FFmpeg-Installation ist fehlgeschlagen.".into()); }
+    resolve_binary("ffmpeg").map(|p| p.to_string_lossy().to_string()).ok_or("FFmpeg wurde installiert, aber nicht gefunden.".into())
+}
+
+fn find_named_path(root: &Path, name: &str) -> Option<PathBuf> {
+    if root.file_name().and_then(|v| v.to_str()) == Some(name) { return Some(root.to_path_buf()); }
+    let entries = fs::read_dir(root).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(found) = find_named_path(&path, name) { return Some(found); }
+        }
+    }
+    None
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             system_status,
+            install_ollama,
+            ollama_pull_model,
+            install_ffmpeg,
             fetch_news_article,
             ollama_generate,
             wikimedia_search,

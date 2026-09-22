@@ -38,30 +38,40 @@ export async function ollamaGenerate(model: string, prompt: string): Promise<str
 }
 
 export async function searchWikimedia(query: string, limit = 8): Promise<MediaResult[]> {
-  if (!inTauri()) {
-    const endpoint = new URL('https://commons.wikimedia.org/w/api.php');
-    endpoint.search = new URLSearchParams({
-      action: 'query', generator: 'search', gsrsearch: query, gsrnamespace: '6', gsrlimit: String(limit),
-      prop: 'imageinfo', iiprop: 'url|extmetadata', iiurlwidth: '800', format: 'json', origin: '*'
-    }).toString();
-    const response = await fetch(endpoint);
-    if (!response.ok) throw new Error(`Wikimedia HTTP ${response.status}`);
-    const json = await response.json();
-    const pages = Object.values(json?.query?.pages ?? {}) as any[];
-    return pages.map((page) => {
-      const info = page.imageinfo?.[0] ?? {};
-      const meta = info.extmetadata ?? {};
-      return {
-        title: String(page.title ?? '').replace(/^File:/, ''),
-        thumbUrl: info.thumburl ?? info.url ?? '',
-        originalUrl: info.url ?? info.thumburl ?? '',
-        pageUrl: info.descriptionurl ?? '',
-        license: meta.LicenseShortName?.value ?? meta.License?.value ?? 'Unbekannt',
-        artist: stripHtml(meta.Artist?.value ?? meta.Credit?.value ?? 'Unbekannt')
-      };
-    }).filter((x) => x.thumbUrl);
+  try {
+    if (inTauri()) return await invoke<MediaResult[]>('wikimedia_search', { query, limit });
+    return await searchWikimediaHttp(query, limit);
+  } catch (primaryError) {
+    try {
+      return await searchWikimediaHttp(query, limit);
+    } catch {
+      throw primaryError;
+    }
   }
-  return invoke<MediaResult[]>('wikimedia_search', { query, limit });
+}
+
+async function searchWikimediaHttp(query: string, limit: number): Promise<MediaResult[]> {
+  const endpoint = new URL('https://commons.wikimedia.org/w/api.php');
+  endpoint.search = new URLSearchParams({
+    action: 'query', generator: 'search', gsrsearch: query, gsrnamespace: '6', gsrlimit: String(limit),
+    prop: 'imageinfo', iiprop: 'url|extmetadata', iiurlwidth: '800', format: 'json', origin: '*'
+  }).toString();
+  const response = await fetch(endpoint);
+  if (!response.ok) throw new Error(`Wikimedia HTTP ${response.status}`);
+  const json = await response.json();
+  const pages = Object.values(json?.query?.pages ?? {}) as any[];
+  return pages.map((page) => {
+    const info = page.imageinfo?.[0] ?? {};
+    const meta = info.extmetadata ?? {};
+    return {
+      title: String(page.title ?? '').replace(/^File:/, ''),
+      thumbUrl: info.thumburl ?? info.url ?? '',
+      originalUrl: info.url ?? info.thumburl ?? '',
+      pageUrl: info.descriptionurl ?? '',
+      license: meta.LicenseShortName?.value ?? meta.License?.value ?? 'Unbekannt',
+      artist: stripHtml(meta.Artist?.value ?? meta.Credit?.value ?? 'Unbekannt')
+    };
+  }).filter((x) => x.thumbUrl);
 }
 
 export function mediaFileUrl(path: string): string {

@@ -103,6 +103,8 @@ export async function pullOllamaModel(model: string, onProgress?: (status: strin
   await invoke('ollama_pull_model', { model });
 }
 
-export async function installOllama(): Promise<string> { return invoke<string>('install_ollama'); }\n\nexport async function installFfmpeg(): Promise<string> {
+export async function installOllama(): Promise<string> { return invoke<string>('install_ollama'); }
+
+export async function installFfmpeg(): Promise<string> {
   return invoke<string>('install_ffmpeg');
 }

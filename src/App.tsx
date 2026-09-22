@@ -497,7 +497,7 @@ function Studio() {
         </button>
       </header>
 
-      <NodeLibrary collapsed={!libraryOpen} onToggle={() => setLibraryOpen((value) => !value)} onAdd={addModule} projectTitle={projectTitle} projects={projects.map(({ id, title }) => ({ id, title }))} onProjectTitleChange={setProjectTitle} onLoadProject={loadProject} />
+      <NodeLibrary collapsed={!libraryOpen} onToggle={() => setLibraryOpen((value) => !value)} onAdd={addModule} projectTitle={projectTitle} projects={projects.map(({ id, title }) => ({ id, title }))} onProjectTitleChange={setProjectTitle} onLoadProject={loadProject} flowTemplates={flowTemplates.map(({ id, title }) => ({ id, title }))} onSaveFlowTemplate={saveFlowTemplate} onLoadFlowTemplate={loadFlowTemplate} onNewEmptyFlow={newEmptyFlow} />
 
       <main className="flow-workspace">
         <div className="canvas-head">
@@ -505,6 +505,7 @@ function Studio() {
             <p className="eyebrow">WORKFLOW</p>
             <strong>News → TikTok Video</strong>
           </div>
+          <div className="canvas-actions">{selectedEdgeId && <button className="button ghost" onClick={() => { setEdges((current) => current.filter((edge) => edge.id !== selectedEdgeId)); setSelectedEdgeId(null); }}>Verbindung entfernen</button>}</div>
           <div className="model-select">
             <span>Lokales Modell</span>
             <select value={model} onChange={(event) => setModel(event.target.value)}>
@@ -529,8 +530,11 @@ function Studio() {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
-            onNodeClick={(_, node) => setSelectedNodeId(node.id)}
-            onPaneClick={() => setSelectedNodeId(null)}
+            onReconnect={onReconnect}
+            edgesReconnectable
+            onEdgeClick={(_, edge) => { setSelectedEdgeId(edge.id); setSelectedNodeId(null); }}
+            onNodeClick={(_, node) => { setSelectedNodeId(node.id); setSelectedEdgeId(null); }}
+            onPaneClick={() => { setSelectedNodeId(null); setSelectedEdgeId(null); }}
             fitView
             minZoom={0.3}
             maxZoom={1.8}
@@ -564,9 +568,11 @@ function Studio() {
         onGenerateVersions={generateVersions}
         onOpenVideoEditor={() => setVideoEditorOpen(true)}
         memoryItems={memoryItems}
+        onOpenResult={openResult}
       />
+      {resultNodeId && <ResultOverlay node={nodes.find((item) => item.id === resultNodeId) ?? null} onClose={() => setResultNodeId(null)} onSave={(value) => { const node = nodes.find((item) => item.id === resultNodeId); if (node?.data.result) setNodeResult(resultNodeId, { ...node.data.result, value }); }} />}
       {videoEditorOpen && <VideoEditorOverlay onClose={() => setVideoEditorOpen(false)} />}
-      {settingsOpen && <SettingsPanel health={health} logs={logs} debugMode={debugMode} onDebugChange={toggleDebug} onRefresh={refreshHealth} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsPanel health={health} logs={logs} debugMode={debugMode} onDebugChange={toggleDebug} debugStops={debugStops} onDebugStopsChange={toggleDebugStops} onRefresh={refreshHealth} onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }

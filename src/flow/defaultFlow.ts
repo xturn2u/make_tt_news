@@ -9,11 +9,12 @@ export const DEFAULT_NODES: Node<StudioNodeData>[] = [
   createFlowNode('script-agent', 'script-agent-1', { x: 790, y: 220 }),
   createFlowNode('storyboard-agent', 'storyboard-agent-1', { x: 1040, y: 100 }),
   createFlowNode('asset-search', 'asset-search-1', { x: 1290, y: 80 }),
+  createFlowNode('memory-card', 'memory-card-1', { x: 1540, y: 80 }),
   createFlowNode('tts', 'tts-1', { x: 1040, y: 330 }),
   createFlowNode('captions', 'captions-1', { x: 1290, y: 330 }),
-  createFlowNode('video-compose', 'video-compose-1', { x: 1540, y: 210 }),
-  createFlowNode('qc-agent', 'qc-agent-1', { x: 1790, y: 210 }),
-  createFlowNode('export', 'export-1', { x: 2040, y: 210 })
+  createFlowNode('video-compose', 'video-compose-1', { x: 1790, y: 210 }),
+  createFlowNode('qc-agent', 'qc-agent-1', { x: 2040, y: 210 }),
+  createFlowNode('export', 'export-1', { x: 2290, y: 210 })
 ];
 
 export const DEFAULT_EDGES: Edge[] = [
@@ -24,7 +25,8 @@ export const DEFAULT_EDGES: Edge[] = [
   { id: 'e-story-assets', source: 'storyboard-agent-1', target: 'asset-search-1' },
   { id: 'e-script-tts', source: 'script-agent-1', target: 'tts-1' },
   { id: 'e-script-captions', source: 'tts-1', target: 'captions-1' },
-  { id: 'e-assets-compose', source: 'asset-search-1', target: 'video-compose-1' },
+  { id: 'e-assets-memory', source: 'asset-search-1', target: 'memory-card-1' },
+  { id: 'e-memory-compose', source: 'memory-card-1', target: 'video-compose-1' },
   { id: 'e-tts-compose', source: 'tts-1', target: 'video-compose-1' },
   { id: 'e-captions-compose', source: 'captions-1', target: 'video-compose-1' },
   { id: 'e-compose-qc', source: 'video-compose-1', target: 'qc-agent-1' },

@@ -28,9 +28,9 @@ import {
 import { createFlowNode } from './flow/catalog';
 import { DEFAULT_EDGES, DEFAULT_NODES } from './flow/defaultFlow';
 import { createExecutionPlan, validateNewsFlow } from './flow/engine';
-import type { MediaResult, NewsArticle, NodeConfig, NodeStatus, StudioNodeData, SystemStatus } from './types';
+import type { Edge, MediaResult, NewsArticle, NodeConfig, NodeStatus, StudioNodeData, SystemStatus } from './types';
 
-const nodeTypes = { studio: StudioNode };
+type StoredProject = { id: string; title: string; nodes: Node<StudioNodeData>[]; edges: Edge[]; model: string; updatedAt: string };
 
 type RunContext = {
   url?: string;
@@ -39,6 +39,7 @@ type RunContext = {
   script?: string;
   assetQuery?: string;
   asset?: MediaResult;
+  assets?: MediaResult[];
   audioPath?: string;
   videoPath?: string;
 };
@@ -61,6 +62,10 @@ function Studio() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [debugMode, setDebugMode] = useState(() => localStorage.getItem('contentflow.debug') === 'true');
+  const [projectTitle, setProjectTitle] = useState(() => localStorage.getItem('contentflow.project.title') || 'Neues Projekt');
+  const [projects, setProjects] = useState<StoredProject[]>(() => readStoredProjects());
+  const [memoryItems, setMemoryItems] = useState<MediaResult[]>([]);
+  const [videoEditorOpen, setVideoEditorOpen] = useState(false);
   const cancelRequested = useRef(false);
   const [outputPath, setOutputPath] = useState('');
   const [logs, setLogs] = useState<string[]>(['ContentFlow Studio bereit.']);
@@ -113,6 +118,20 @@ function Studio() {
     void refreshHealth();
   }, [refreshHealth]);
 
+  useEffect(() => {
+    const snapshot: StoredProject = { id: 'current', title: projectTitle || 'Neues Projekt', nodes, edges, model, updatedAt: new Date().toISOString() };
+    localStorage.setItem('contentflow.flow', JSON.stringify(snapshot));
+    localStorage.setItem('contentflow.project.title', projectTitle);
+    setProjects((current) => {
+      const existing = current.filter((project) => project.id !== 'current' && project.title !== snapshot.title);
+      return [snapshot, ...existing].slice(0, 12);
+    });
+  }, [edges, model, nodes, projectTitle]);
+
+  useEffect(() => {
+    localStorage.setItem('contentflow.projects', JSON.stringify(projects));
+  }, [projects]);
+
   const setSourceUrl = useCallback((url: string) => {
     if (!sourceNode) return;
     updateNodeConfig(sourceNode.id, { ...sourceNode.data.config, url });
@@ -145,7 +164,7 @@ function Studio() {
     addModule(moduleId, position);
   }, [addModule, screenToFlowPosition]);
 
-  const runFlow = useCallback(async () => {
+  const runFlow = useCallback(async (startNodeId?: string) => {
     if (running) return;
 
     const warnings = validateNewsFlow(nodes, edges);
@@ -162,16 +181,17 @@ function Studio() {
       return;
     }
 
+    const executionOrder = startNodeId ? plan.order.slice(Math.max(0, plan.order.indexOf(startNodeId))) : plan.order;
     cancelRequested.current = false;
     setRunning(true);
     setOutputPath('');
     setNodes((current) => current.map((node) => ({ ...node, data: { ...node.data, status: 'idle' as NodeStatus, detail: undefined } })));
-    addLog(`Flow gestartet: ${plan.order.length} Module.`);
+    addLog(`${startNodeId ? 'Flow ab' : 'Flow'} gestartet: ${executionOrder.length} Module.`);
 
     const ctx: RunContext = {};
 
     try {
-      for (const nodeId of plan.order) {
+      for (const nodeId of executionOrder) {
         if (cancelRequested.current) throw new Error('Workflow vom Benutzer abgebrochen.');
         const node = nodes.find((item) => item.id === nodeId);
         if (!node) continue;
@@ -241,9 +261,31 @@ function Studio() {
           const query = String(config.query ?? '').trim() || ctx.assetQuery || deriveQuery(ctx.article);
           const results = await searchWikimedia(query, Number(config.limit ?? 8));
           if (!results.length) throw new Error(`Keine Medien für „${query}“ gefunden.`);
+          ctx.assets = results;
           ctx.asset = results[0];
+          setMemoryItems(results);
           setNodeStatus(node.id, 'success', `${results.length} Treffer · ${ctx.asset.license}`);
           addLog(`Asset Search: ${results.length} Treffer für „${query}“.`);
+          continue;
+        }
+
+        if (moduleId === 'memory-card') {
+          setNodeStatus(node.id, 'success', `${memoryItems.length || ctx.assets?.length || 0} Medien im Speicher`);
+          addLog('Memory Card für weitere Flow-Schritte bereit.');
+          continue;
+        }
+
+        if (moduleId === 'custom-agent') {
+          const prompt = String(config.prompt ?? '').trim();
+          const input = ctx.script ?? ctx.research ?? ctx.article?.text ?? '';
+          if (!prompt) throw new Error('Der freie Agent benötigt einen Prompt.');
+          if (health?.ollamaAvailable && model) {
+            const result = await ollamaGenerate(model, `${prompt}\n\nEINGABE:\n${input}`);
+            ctx.research = result;
+            setNodeStatus(node.id, 'success', String(config.name ?? 'Freier Agent'));
+          } else {
+            setNodeStatus(node.id, 'warning', 'Prompt gespeichert · lokale KI nicht aktiv');
+          }
           continue;
         }
 
@@ -294,13 +336,41 @@ function Studio() {
       addLog('Flow erfolgreich abgeschlossen.');
     } catch (error) {
       const message = errorText(error);
-      const activeId = plan.order.find((id) => nodes.find((node) => node.id === id)?.data.status === 'running');
+      const activeId = executionOrder.find((id) => nodes.find((node) => node.id === id)?.data.status === 'running');
       if (activeId) setNodeStatus(activeId, 'error', message);
       addLog(`Flow gestoppt: ${message}`);
     } finally {
       setRunning(false);
     }
   }, [addLog, edges, health, model, nodes, running, setNodeStatus, setNodes]);
+
+  const generateVersions = useCallback((nodeId: string, count: number) => {
+    const total = Math.max(1, Math.min(5, Math.round(count)));
+    if (total < 2) { addLog('Für zusätzliche Flow-Bahnen mindestens 2 Versionen wählen.'); return; }
+    const duplicateModules = new Set(['script-agent', 'storyboard-agent', 'asset-search', 'tts', 'captions', 'video-compose', 'qc-agent', 'export']);
+    const originals = nodes.filter((node) => duplicateModules.has(node.data.moduleId));
+    const newNodes: Node<StudioNodeData>[] = [];
+    const newEdges: Edge[] = [];
+    for (let version = 2; version <= total; version += 1) {
+      const map = new Map(originals.map((node) => [node.id, `${node.id}-v${version}`]));
+      originals.forEach((node) => newNodes.push({ ...node, id: map.get(node.id)!, position: { x: node.position.x, y: node.position.y + version * 340 }, data: { ...node.data, config: { ...node.data.config, version }, detail: undefined, status: 'idle' } }));
+      edges.forEach((edge) => {
+        if (map.has(edge.source) && map.has(edge.target)) newEdges.push({ ...edge, id: `${edge.id}-v${version}`, source: map.get(edge.source)!, target: map.get(edge.target)! });
+      });
+    }
+    setNodes((current) => [...current, ...newNodes]);
+    setEdges((current) => [...current, ...newEdges]);
+    addLog(`${total - 1} zusätzliche Flow-Bahn(en) ab Script Agent eingefügt.`);
+    setSelectedNodeId(nodeId);
+  }, [addLog, edges, nodes, setEdges, setNodes]);
+
+  const startFrom = useCallback((nodeId: string) => { void runFlow(nodeId); }, [runFlow]);
+  const loadProject = useCallback((id: string) => {
+    const project = projects.find((item) => item.id === id);
+    if (!project) return;
+    setNodes(project.nodes); setEdges(project.edges); setModel(project.model); setProjectTitle(project.title); setSelectedNodeId(project.nodes[0]?.id ?? null); addLog(`Projekt geladen: ${project.title}`);
+  }, [addLog, projects, setEdges, setNodes]);
+  const nodeTypes = useMemo(() => ({ studio: (props: any) => <StudioNode {...props} onStartFrom={startFrom} /> }), [startFrom]);
 
   const cancelFlow = useCallback(() => {
     if (!running) return;
@@ -355,7 +425,7 @@ function Studio() {
         </button>
       </header>
 
-      <NodeLibrary collapsed={!libraryOpen} onToggle={() => setLibraryOpen((value) => !value)} onAdd={addModule} />
+      <NodeLibrary collapsed={!libraryOpen} onToggle={() => setLibraryOpen((value) => !value)} onAdd={addModule} projectTitle={projectTitle} projects={projects.map(({ id, title }) => ({ id, title }))} onProjectTitleChange={setProjectTitle} onLoadProject={loadProject} />
 
       <main className="flow-workspace">
         <div className="canvas-head">
@@ -401,6 +471,7 @@ function Studio() {
         </div>
 
         <div className="run-dock">
+          {memoryItems.length > 0 && <div className="memory-card"><strong>Memory Card · Artikel-Material</strong><div className="memory-gallery">{memoryItems.map((item) => <figure key={item.originalUrl}><img src={item.thumbUrl} alt={item.title} /><figcaption>{item.title}</figcaption></figure>)}</div></div>}
           <div className="log-list">
             {logs.slice(0, debugMode ? 20 : 4).map((entry, index) => <span key={`${entry}-${index}`}>{entry}</span>)}
           </div>
@@ -418,7 +489,11 @@ function Studio() {
         health={health}
         onChangeConfig={updateNodeConfig}
         onDelete={deleteNode}
+        onStartFrom={startFrom}
+        onGenerateVersions={generateVersions}
+        onOpenVideoEditor={() => setVideoEditorOpen(true)}
       />
+      {videoEditorOpen && <VideoEditorOverlay onClose={() => setVideoEditorOpen(false)} />}
       {settingsOpen && <SettingsPanel health={health} logs={logs} debugMode={debugMode} onDebugChange={toggleDebug} onRefresh={refreshHealth} onClose={() => setSettingsOpen(false)} />}
     </div>
   );
@@ -492,4 +567,16 @@ function normalizeSearchQuery(value: string) {
 function errorText(error: unknown) {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function readStoredProjects(): StoredProject[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem('contentflow.projects') || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+}
+
+function VideoEditorOverlay({ onClose }: { onClose: () => void }) {
+  const [caption, setCaption] = useState('');
+  return <div className="video-editor-overlay" role="dialog" aria-modal="true"><section className="video-editor"><div className="settings-title"><div><p className="eyebrow">VIDEO COMPOSER</p><h2>Manuelle Nacharbeit</h2><span>CapCut-artiger Entwurf für Schnitt, Text und Timing</span></div><button className="button ghost" onClick={onClose}>Schließen</button></div><div className="editor-track">Video-Vorschau / Timeline-Platzhalter</div><div className="field"><span>Caption-Overlay</span><textarea rows={3} value={caption} onChange={(event) => setCaption(event.target.value)} placeholder="Text für die manuelle Nacharbeit …" /></div><div className="editor-controls"><button className="button ghost" onClick={onClose}>Änderungen verwerfen</button><button className="button primary" onClick={onClose}>Entwurf speichern</button></div></section></div>;
 }

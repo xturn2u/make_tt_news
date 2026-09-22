@@ -3,10 +3,10 @@ import { listen } from '@tauri-apps/api/event';
 import { installFfmpeg, installOllama, MODEL_CATALOG, pullOllamaModel, type ModelCatalogItem } from '../desktop';
 import type { SystemStatus } from '../types';
 
-type Props = { health: SystemStatus | null; logs: string[]; debugMode: boolean; onDebugChange: (enabled: boolean) => void; onRefresh: () => Promise<void>; onClose: () => void };
+type Props = { health: SystemStatus | null; logs: string[]; debugMode: boolean; onDebugChange: (enabled: boolean) => void; debugStops: boolean; onDebugStopsChange: (enabled: boolean) => void; onRefresh: () => Promise<void>; onClose: () => void };
 type ModelProgress = { model: string; status: string; completed?: number; total?: number; percent?: number };
 
-export default function SettingsPanel({ health, logs, debugMode, onDebugChange, onRefresh, onClose }: Props) {
+export default function SettingsPanel({ health, logs, debugMode, onDebugChange, debugStops, onDebugStopsChange, onRefresh, onClose }: Props) {
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState('');
@@ -74,7 +74,7 @@ export default function SettingsPanel({ health, logs, debugMode, onDebugChange, 
       })}</div>
       <div className="settings-tool"><div><strong>FFmpeg</strong><p>Wird für den Videoexport benötigt. ContentFlow richtet es automatisch ein.</p><small>{health?.ffmpegPath ?? 'Nicht gefunden'}</small></div><button className="button primary" disabled={busy !== '' || !!health?.ffmpegAvailable} onClick={() => void setupFfmpeg()}>{busy === 'ffmpeg' ? 'Wird eingerichtet …' : health?.ffmpegAvailable ? 'Bereit' : 'Einrichten'}</button></div>
       <div className="drive-card"><strong>Google Drive · Memory Cards</strong><p>Ordner für Bilder und Videos hinterlegen. Die Materialquelle wird für kommende Memory-Card-Schritte gespeichert.</p><input value={driveFolder} onChange={(event) => setDriveFolder(event.target.value)} placeholder="Google-Drive-Ordner-URL …" /><button className="button ghost" onClick={saveDriveFolder}>Ordner verknüpfen</button></div>
-      <div className="settings-tool debug-setting"><div><strong>Debugging Report</strong><p>Zeigt ausführliche Laufprotokolle und stellt sie zur Fehleranalyse bereit.</p><small>{debugMode ? 'Aktiv' : 'Kompakt'}</small></div><div className="debug-actions"><button className="button ghost" onClick={() => navigator.clipboard?.writeText(JSON.stringify({ exportedAt: new Date().toISOString(), logs }, null, 2))}>Report kopieren</button><label><input type="checkbox" checked={debugMode} onChange={(event) => onDebugChange(event.target.checked)} /> Aktiv</label></div></div>
+      <div className="settings-tool debug-setting"><div><strong>Debugging Report</strong><p>Zeigt ausführliche Laufprotokolle und stellt sie zur Fehleranalyse bereit.</p><small>{debugMode ? 'Aktiv' : 'Kompakt'}</small></div><div className="debug-actions"><button className="button ghost" onClick={() => navigator.clipboard?.writeText(JSON.stringify({ exportedAt: new Date().toISOString(), logs }, null, 2))}>Report kopieren</button><label><input type="checkbox" checked={debugMode} onChange={(event) => onDebugChange(event.target.checked)} /> Report</label><label><input type="checkbox" checked={debugStops} onChange={(event) => onDebugStopsChange(event.target.checked)} /> Haltepunkte</label></div></div>
       {message && <div className="settings-message">{message}</div>}
       <footer className="settings-foot">Modelle und Medienwerkzeuge werden lokal auf diesem Mac verwaltet. Es sind keine manuellen Terminal-Schritte nötig.</footer>
     </section>

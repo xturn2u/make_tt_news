@@ -23,7 +23,7 @@ export const DEFAULT_EDGES: Edge[] = [
   { id: 'e-script-story', source: 'script-agent-1', target: 'storyboard-agent-1' },
   { id: 'e-story-assets', source: 'storyboard-agent-1', target: 'asset-search-1' },
   { id: 'e-script-tts', source: 'script-agent-1', target: 'tts-1' },
-  { id: 'e-script-captions', source: 'script-agent-1', target: 'captions-1' },
+  { id: 'e-script-captions', source: 'tts-1', target: 'captions-1' },
   { id: 'e-assets-compose', source: 'asset-search-1', target: 'video-compose-1' },
   { id: 'e-tts-compose', source: 'tts-1', target: 'video-compose-1' },
   { id: 'e-captions-compose', source: 'captions-1', target: 'video-compose-1' },

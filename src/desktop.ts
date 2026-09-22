@@ -100,9 +100,9 @@ export const MODEL_CATALOG: ModelCatalogItem[] = [
 ];
 
 export async function pullOllamaModel(model: string, onProgress?: (status: string) => void): Promise<void> {
-  await invoke('ollama_pull_model', { model, onProgress: undefined });
+  await invoke('ollama_pull_model', { model });
 }
 
-export async function installFfmpeg(): Promise<string> {
+export async function installOllama(): Promise<string> { return invoke<string>('install_ollama'); }\n\nexport async function installFfmpeg(): Promise<string> {
   return invoke<string>('install_ffmpeg');
 }

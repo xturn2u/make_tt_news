@@ -83,3 +83,26 @@ export async function revealInFinder(path: string): Promise<void> {
 function stripHtml(value: string): string {
   return value.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
 }
+
+
+export type ModelCatalogItem = {
+  id: string;
+  name: string;
+  description: string;
+  size: string;
+  recommended?: boolean;
+};
+
+export const MODEL_CATALOG: ModelCatalogItem[] = [
+  { id: 'qwen2.5:7b', name: 'Qwen 2.5 · 7B', description: 'Starkes mehrsprachiges Modell für Recherche und deutsche Skripte.', size: '~4,7 GB', recommended: true },
+  { id: 'llama3.2:3b', name: 'Llama 3.2 · 3B', description: 'Schneller und sparsamer Einstieg für kleinere Macs.', size: '~2,0 GB' },
+  { id: 'mistral:7b', name: 'Mistral · 7B', description: 'Schnelles allgemeines Modell für lokale Workflows.', size: '~4,1 GB' }
+];
+
+export async function pullOllamaModel(model: string, onProgress?: (status: string) => void): Promise<void> {
+  await invoke('ollama_pull_model', { model, onProgress: undefined });
+}
+
+export async function installFfmpeg(): Promise<string> {
+  return invoke<string>('install_ffmpeg');
+}

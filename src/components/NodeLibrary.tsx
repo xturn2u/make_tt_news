@@ -9,14 +9,18 @@ type Props = {
   projects: Array<{ id: string; title: string }>;
   onProjectTitleChange: (title: string) => void;
   onLoadProject: (id: string) => void;
+  flowTemplates: Array<{ id: string; title: string }>;
+  onSaveFlowTemplate: () => void;
+  onLoadFlowTemplate: (id: string) => void;
+  onNewEmptyFlow: () => void;
 };
 
-export default function NodeLibrary({ collapsed, onToggle, onAdd, projectTitle, projects, onProjectTitleChange, onLoadProject }: Props) {
+export default function NodeLibrary({ collapsed, onToggle, onAdd, projectTitle, projects, onProjectTitleChange, onLoadProject, flowTemplates, onSaveFlowTemplate, onLoadFlowTemplate, onNewEmptyFlow }: Props) {
   return (
     <aside className={`node-library ${collapsed ? 'collapsed' : ''}`}>
       <button className="library-toggle" onClick={onToggle} aria-label={collapsed ? 'Seitenmenü öffnen' : 'Seitenmenü einklappen'}>{collapsed ? '›' : '‹'}</button>
       {!collapsed && <>
-      <div className="project-store"><p className="eyebrow">PROJEKT & FLOW SPEICHER</p><input value={projectTitle} onChange={(event) => onProjectTitleChange(event.target.value)} placeholder="Projekttitel …" /><small>Automatisch lokal gespeichert</small>{projects.length > 0 && <div className="project-list">{projects.map((project) => <button type="button" key={project.id} onClick={() => onLoadProject(project.id)}>{project.title}</button>)}</div>}</div>
+      <div className="project-store"><p className="eyebrow">PROJEKT & FLOW SPEICHER</p><input value={projectTitle} onChange={(event) => onProjectTitleChange(event.target.value)} placeholder="Projekttitel …" /><small>Automatisch lokal gespeichert</small><div className="flow-store-actions"><button type="button" onClick={onNewEmptyFlow}>Neuer leerer Flow</button><button type="button" onClick={onSaveFlowTemplate}>Flow speichern</button></div>{projects.length > 0 && <div className="project-list">{projects.map((project) => <button type="button" key={project.id} onClick={() => onLoadProject(project.id)}>{project.title}</button>)}</div>}</div>
       <div className="library-head">
         <p className="eyebrow">MODULE</p>
         <h2>Flow-Bausteine</h2>

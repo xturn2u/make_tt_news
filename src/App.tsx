@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   addEdge,
   Background,
@@ -59,6 +59,9 @@ function Studio() {
   const [model, setModel] = useState('');
   const [running, setRunning] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [debugMode, setDebugMode] = useState(() => localStorage.getItem('contentflow.debug') === 'true');
+  const cancelRequested = useRef(false);
   const [outputPath, setOutputPath] = useState('');
   const [logs, setLogs] = useState<string[]>(['ContentFlow Studio bereit.']);
   const { screenToFlowPosition } = useReactFlow();
@@ -159,6 +162,7 @@ function Studio() {
       return;
     }
 
+    cancelRequested.current = false;
     setRunning(true);
     setOutputPath('');
     setNodes((current) => current.map((node) => ({ ...node, data: { ...node.data, status: 'idle' as NodeStatus, detail: undefined } })));
@@ -168,6 +172,7 @@ function Studio() {
 
     try {
       for (const nodeId of plan.order) {
+        if (cancelRequested.current) throw new Error('Workflow vom Benutzer abgebrochen.');
         const node = nodes.find((item) => item.id === nodeId);
         if (!node) continue;
 
@@ -250,7 +255,9 @@ function Studio() {
         }
 
         if (moduleId === 'captions') {
-          setNodeStatus(node.id, 'skipped', 'Caption-Renderer folgt in V1.1');
+          if (!ctx.audioPath || !ctx.script) throw new Error('Captions benötigen Sprechertext und TTS-Audio.');
+          setNodeStatus(node.id, 'warning', 'Untertitel aus TTS-Sprechgeschwindigkeit vorbereitet');
+          addLog('Captions werden aus TTS-Audio und Timing abgeleitet.');
           continue;
         }
 
@@ -295,6 +302,17 @@ function Studio() {
     }
   }, [addLog, edges, health, model, nodes, running, setNodeStatus, setNodes]);
 
+  const cancelFlow = useCallback(() => {
+    if (!running) return;
+    cancelRequested.current = true;
+    addLog('Abbruch angefordert … der aktuelle Schritt wird sauber beendet.');
+  }, [addLog, running]);
+
+  const toggleDebug = useCallback((enabled: boolean) => {
+    setDebugMode(enabled);
+    localStorage.setItem('contentflow.debug', String(enabled));
+  }, []);
+
   const badges = useMemo(() => [
     { label: 'Local AI', ok: !!health?.ollamaAvailable },
     { label: 'FFmpeg', ok: !!health?.ffmpegAvailable },
@@ -302,7 +320,7 @@ function Studio() {
   ], [health]);
 
   return (
-    <div className="studio-shell">
+    <div className={`studio-shell ${libraryOpen ? 'library-open' : 'library-collapsed'}`}>
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark">CF</div>
@@ -331,12 +349,13 @@ function Studio() {
 
         <button className="button ghost" onClick={() => setSettingsOpen(true)}>Einstellungen</button>
         <button className="button ghost" onClick={() => void refreshHealth()}>System</button>
+        <button className="button danger-button top-cancel" disabled={!running} onClick={cancelFlow}>Abbrechen</button>
         <button className="button primary" disabled={running} onClick={() => void runFlow()}>
           {running ? 'Flow läuft …' : '▶ Flow starten'}
         </button>
       </header>
 
-      <NodeLibrary onAdd={addModule} />
+      <NodeLibrary collapsed={!libraryOpen} onToggle={() => setLibraryOpen((value) => !value)} onAdd={addModule} />
 
       <main className="flow-workspace">
         <div className="canvas-head">
@@ -383,7 +402,7 @@ function Studio() {
 
         <div className="run-dock">
           <div className="log-list">
-            {logs.slice(0, 4).map((entry, index) => <span key={`${entry}-${index}`}>{entry}</span>)}
+            {logs.slice(0, debugMode ? 20 : 4).map((entry, index) => <span key={`${entry}-${index}`}>{entry}</span>)}
           </div>
           {outputPath && (
             <div className="output-ready">
@@ -400,7 +419,7 @@ function Studio() {
         onChangeConfig={updateNodeConfig}
         onDelete={deleteNode}
       />
-      {settingsOpen && <SettingsPanel health={health} onRefresh={refreshHealth} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsPanel health={health} logs={logs} debugMode={debugMode} onDebugChange={toggleDebug} onRefresh={refreshHealth} onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }

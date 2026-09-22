@@ -10,9 +10,10 @@ type Props = {
   onGenerateVersions: (nodeId: string, count: number) => void;
   onOpenVideoEditor: (nodeId: string) => void;
   memoryItems: MediaResult[];
+  onOpenResult: (nodeId: string) => void;
 };
 
-export default function InspectorPanel({ node, health, onChangeConfig, onDelete, onStartFrom, onGenerateVersions, onOpenVideoEditor, memoryItems }: Props) {
+export default function InspectorPanel({ node, health, onChangeConfig, onDelete, onStartFrom, onGenerateVersions, onOpenVideoEditor, memoryItems, onOpenResult }: Props) {
   if (!node) {
     return (
       <aside className="inspector">
@@ -51,6 +52,8 @@ export default function InspectorPanel({ node, health, onChangeConfig, onDelete,
       </div>
 
       <div className="inspector-actions"><button className="button primary" onClick={() => onStartFrom(node.id)}>▶ Ab hier starten</button>{node.data.moduleId === 'video-compose' && <button className="button ghost" onClick={() => onOpenVideoEditor(node.id)}>✎ Video Composer öffnen</button>}</div>
+
+      <div className="inspector-result-actions"><button className="button ghost" disabled={!node.data.result} onClick={() => onOpenResult(node.id)}>▣ {node.data.result ? 'Ergebnis anzeigen' : 'Noch kein Ergebnis'}</button>{node.data.moduleId === 'tts' && node.data.result?.kind === 'audio' && <audio className="audio-preview" controls src={mediaFileUrl(node.data.result.value)} />}</div>
 
       <div className="inspector-fields">
         {Object.entries(config).length === 0 && <p className="muted">Für dieses Modul sind aktuell keine Parameter notwendig.</p>}

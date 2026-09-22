@@ -10,6 +10,7 @@ export default function SettingsPanel({ health, logs, debugMode, onDebugChange, 
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState('');
+  const [driveFolder, setDriveFolder] = useState(() => localStorage.getItem('contentflow.drive.folder') || '');
   const [progress, setProgress] = useState<ModelProgress | null>(null);
   const models = useMemo(() => MODEL_CATALOG.filter((m) => !query || (m.name + m.description).toLowerCase().includes(query.toLowerCase())), [query]);
 
@@ -55,6 +56,7 @@ export default function SettingsPanel({ health, logs, debugMode, onDebugChange, 
   }
 
   const progressPercent = Math.max(0, Math.min(100, progress?.percent ?? 0));
+  function saveDriveFolder() { localStorage.setItem('contentflow.drive.folder', driveFolder); setMessage('Google-Drive-Ordner für Memory Cards gespeichert.'); }
 
   return <div className="settings-overlay" role="dialog" aria-modal="true">
     <section className="settings-panel">
@@ -71,6 +73,7 @@ export default function SettingsPanel({ health, logs, debugMode, onDebugChange, 
         return <article className="model-card" key={model.id}><div><strong>{model.name}</strong>{model.recommended && <em>Empfohlen</em>}<p>{model.description}</p><small>{model.size} · {installed ? 'Installiert' : 'Noch nicht installiert'}</small>{active && <div className="model-progress"><div className="model-progress-head"><span>{progress?.status ?? 'Lädt …'}</span><span>{progress?.percent != null ? `${Math.round(progress.percent)}%` : '…'}</span></div><div className="model-progress-track"><div className="model-progress-bar" style={{ width: `${progressPercent}%` }} /></div><small>Das Modell wird direkt über die Local-AI-Runtime geladen.</small></div>}</div><button className={installed ? 'button ghost' : 'button primary'} disabled={installed || !!busy} onClick={() => void installModel(model)}>{busy === model.id ? 'Lädt …' : installed ? 'Installiert' : 'Installieren'}</button></article>;
       })}</div>
       <div className="settings-tool"><div><strong>FFmpeg</strong><p>Wird für den Videoexport benötigt. ContentFlow richtet es automatisch ein.</p><small>{health?.ffmpegPath ?? 'Nicht gefunden'}</small></div><button className="button primary" disabled={busy !== '' || !!health?.ffmpegAvailable} onClick={() => void setupFfmpeg()}>{busy === 'ffmpeg' ? 'Wird eingerichtet …' : health?.ffmpegAvailable ? 'Bereit' : 'Einrichten'}</button></div>
+      <div className="drive-card"><strong>Google Drive · Memory Cards</strong><p>Ordner für Bilder und Videos hinterlegen. Die Materialquelle wird für kommende Memory-Card-Schritte gespeichert.</p><input value={driveFolder} onChange={(event) => setDriveFolder(event.target.value)} placeholder="Google-Drive-Ordner-URL …" /><button className="button ghost" onClick={saveDriveFolder}>Ordner verknüpfen</button></div>
       <div className="settings-tool debug-setting"><div><strong>Debugging Report</strong><p>Zeigt ausführliche Laufprotokolle und stellt sie zur Fehleranalyse bereit.</p><small>{debugMode ? 'Aktiv' : 'Kompakt'}</small></div><div className="debug-actions"><button className="button ghost" onClick={() => navigator.clipboard?.writeText(JSON.stringify({ exportedAt: new Date().toISOString(), logs }, null, 2))}>Report kopieren</button><label><input type="checkbox" checked={debugMode} onChange={(event) => onDebugChange(event.target.checked)} /> Aktiv</label></div></div>
       {message && <div className="settings-message">{message}</div>}
       <footer className="settings-foot">Modelle und Medienwerkzeuge werden lokal auf diesem Mac verwaltet. Es sind keine manuellen Terminal-Schritte nötig.</footer>

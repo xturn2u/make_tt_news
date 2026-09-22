@@ -8,7 +8,8 @@ use std::{
     process::Command,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tauri::Manager;
+use futures_util::StreamExt;
+use tauri::{Emitter, Manager};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -434,17 +435,59 @@ fn tail(value: &str, max: usize) -> String {
 
 
 #[tauri::command]
-async fn ollama_pull_model(model: String) -> Result<(), String> {
+async fn ollama_pull_model(app: tauri::AppHandle, model: String) -> Result<(), String> {
     let model = model.trim();
     if model.is_empty() { return Err("Kein Modell ausgewählt.".into()); }
     let client = http_client()?;
-    let response = client.post("http://127.0.0.1:11434/api/pull")
-        .json(&json!({"name": model, "stream": false}))
-        .send().await
-        .map_err(|_| "Ollama ist nicht aktiv. Installiere die Local-AI-Runtime zuerst in diesem Einstellungsbereich.".to_string())?;
+    let request = || client.post("http://127.0.0.1:11434/api/pull")
+        .json(&json!({"name": model, "stream": true}));
+    let response = match request().send().await {
+        Ok(response) if response.status().is_success() => response,
+        _ => {
+            // Ollama can be installed but still starting in the background.
+            let _ = Command::new("/usr/bin/open").args(["-a", "Ollama"]).status();
+            std::thread::sleep(Duration::from_secs(2));
+            request().send().await.map_err(|_| "Local-AI-Runtime konnte nicht erreicht werden. Bitte die Runtime in den Einstellungen erneut starten.".to_string())?
+        }
+    };
     if !response.status().is_success() {
         return Err(format!("Modell konnte nicht geladen werden (Ollama HTTP {}).", response.status()));
     }
+
+    let _ = app.emit("model-progress", json!({"model": model, "status": "Download gestartet", "percent": 0}));
+    let mut stream = response.bytes_stream();
+    let mut buffer = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Modell-Download fehlgeschlagen: {e}"))?;
+        buffer.extend_from_slice(&chunk);
+        while let Some(position) = buffer.iter().position(|byte| *byte == b'\n') {
+            let line: Vec<u8> = buffer.drain(..=position).collect();
+            let line = String::from_utf8_lossy(&line);
+            if let Ok(value) = serde_json::from_str::<Value>(line.trim()) {
+                let status = value.get("status").and_then(Value::as_str).unwrap_or("Lädt …");
+                let completed = value.get("completed").and_then(Value::as_u64);
+                let total = value.get("total").and_then(Value::as_u64);
+                let percent = match (completed, total) {
+                    (Some(done), Some(total)) if total > 0 => Some((done as f64 / total as f64) * 100.0),
+                    _ => None,
+                };
+                let _ = app.emit("model-progress", json!({
+                    "model": model,
+                    "status": status,
+                    "completed": completed,
+                    "total": total,
+                    "percent": percent
+                }));
+            }
+        }
+    }
+    if !buffer.is_empty() {
+        if let Ok(value) = serde_json::from_slice::<Value>(&buffer) {
+            let status = value.get("status").and_then(Value::as_str).unwrap_or("Installation abgeschlossen");
+            let _ = app.emit("model-progress", json!({"model": model, "status": status, "percent": 100}));
+        }
+    }
+    let _ = app.emit("model-progress", json!({"model": model, "status": "Installation abgeschlossen", "percent": 100}));
     Ok(())
 }
 
@@ -474,20 +517,52 @@ async fn install_ollama(app: tauri::AppHandle) -> Result<String, String> {
 #[tauri::command]
 async fn install_ffmpeg(app: tauri::AppHandle) -> Result<String, String> {
     if let Some(path) = resolve_binary("ffmpeg") { return Ok(path.to_string_lossy().to_string()); }
-    let brew = resolve_binary("brew").ok_or("FFmpeg kann automatisch installiert werden, sobald Homebrew verfügbar ist.".to_string())?;
-    let status = Command::new(brew).args(["install", "ffmpeg"]).status().map_err(|e| format!("FFmpeg-Installation konnte nicht gestartet werden: {e}"))?;
-    if !status.success() { return Err("FFmpeg-Installation ist fehlgeschlagen.".into()); }
-    resolve_binary("ffmpeg").map(|p| p.to_string_lossy().to_string()).ok_or("FFmpeg wurde installiert, aber nicht gefunden.".into())
+    if let Some(brew) = resolve_binary("brew") {
+        let status = Command::new(brew).args(["install", "ffmpeg"]).status().map_err(|e| format!("FFmpeg-Installation konnte nicht gestartet werden: {e}"))?;
+        if status.success() {
+            if let Some(path) = resolve_binary("ffmpeg") { return Ok(path.to_string_lossy().to_string()); }
+        }
+    }
+
+    // Fallback: install a self-contained binary into the app data directory.
+    let runtime = ensure_data_dir(&app)?.join("runtime");
+    let bin_dir = runtime.join("bin");
+    fs::create_dir_all(&bin_dir).map_err(|e| e.to_string())?;
+    let destination = bin_dir.join("ffmpeg");
+    if destination.is_file() {
+        let _ = Command::new("/bin/chmod").args(["755", destination.to_string_lossy().as_ref()]).status();
+        return Ok(destination.to_string_lossy().to_string());
+    }
+    let url = if env::consts::ARCH == "aarch64" {
+        "https://www.osxexperts.net/ffmpeg80arm.zip"
+    } else {
+        "https://www.osxexperts.net/ffmpeg80intel.zip"
+    };
+    let archive = runtime.join(format!("ffmpeg-{}.zip", timestamp()));
+    let response = http_client()?.get(url).send().await.map_err(|e| format!("FFmpeg-Download fehlgeschlagen: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("FFmpeg-Download HTTP {}", response.status()));
+    }
+    let bytes = response.bytes().await.map_err(|e| format!("FFmpeg-Download fehlgeschlagen: {e}"))?;
+    fs::write(&archive, &bytes).map_err(|e| e.to_string())?;
+    let unpack = runtime.join(format!("ffmpeg-unpacked-{}", timestamp()));
+    fs::create_dir_all(&unpack).map_err(|e| e.to_string())?;
+    let status = Command::new("/usr/bin/ditto").args(["-x", "-k"]).arg(&archive).arg(&unpack).status().map_err(|e| e.to_string())?;
+    if !status.success() { return Err("FFmpeg-Archiv konnte nicht entpackt werden.".into()); }
+    let source = find_named_path(&unpack, "ffmpeg").ok_or("FFmpeg-Binary wurde im Download nicht gefunden.")?;
+    fs::copy(&source, &destination).map_err(|e| format!("FFmpeg konnte nicht eingerichtet werden: {e}"))?;
+    let _ = Command::new("/bin/chmod").args(["755", destination.to_string_lossy().as_ref()]).status();
+    let _ = fs::remove_file(&archive);
+    let _ = fs::remove_dir_all(&unpack);
+    Ok(destination.to_string_lossy().to_string())
 }
 
 fn find_named_path(root: &Path, name: &str) -> Option<PathBuf> {
     if root.file_name().and_then(|v| v.to_str()) == Some(name) { return Some(root.to_path_buf()); }
+    if !root.is_dir() { return None; }
     let entries = fs::read_dir(root).ok()?;
     for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if let Some(found) = find_named_path(&path, name) { return Some(found); }
-        }
+        if let Some(found) = find_named_path(&entry.path(), name) { return Some(found); }
     }
     None
 }

@@ -2,8 +2,12 @@ name: Build macOS MVP
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/contentflow-studio-v1]
   workflow_dispatch:
+
+concurrency:
+  group: mac-build-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

@@ -477,7 +477,6 @@ function Studio() {
         </div>
 
         <div className="run-dock">
-          {memoryItems.length > 0 && <div className="memory-card"><strong>Memory Card · Artikel-Material</strong><div className="memory-gallery">{memoryItems.map((item) => <figure key={item.originalUrl}><img src={item.thumbUrl} alt={item.title} /><figcaption>{item.title}</figcaption></figure>)}</div></div>}
           <div className="log-list">
             {logs.slice(0, debugMode ? 20 : 4).map((entry, index) => <span key={`${entry}-${index}`}>{entry}</span>)}
           </div>
@@ -498,6 +497,7 @@ function Studio() {
         onStartFrom={startFrom}
         onGenerateVersions={generateVersions}
         onOpenVideoEditor={() => setVideoEditorOpen(true)}
+        memoryItems={memoryItems}
       />
       {videoEditorOpen && <VideoEditorOverlay onClose={() => setVideoEditorOpen(false)} />}
       {settingsOpen && <SettingsPanel health={health} logs={logs} debugMode={debugMode} onDebugChange={toggleDebug} onRefresh={refreshHealth} onClose={() => setSettingsOpen(false)} />}

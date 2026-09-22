@@ -509,7 +509,7 @@ function buildProjectTitlePrompt(article: NewsArticle) {
 }
 
 function normalizeProjectTitle(value: string) {
-  return value.split('\\n')[0].replace(/^[-*#\\s]+|[-*#\\s]+$/g, '').slice(0, 60).trim();
+  return value.split('\n')[0].replace(/^[-*#\s]+|[-*#\s]+$/g, '').slice(0, 60).trim();
 }
 
 function buildResearchPrompt(article: NewsArticle, instruction: string) {

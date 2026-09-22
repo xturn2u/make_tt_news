@@ -46,9 +46,10 @@ struct NewsArticle {
 
 #[tauri::command]
 async fn system_status(app: tauri::AppHandle) -> Result<SystemStatus, String> {
-    let ffmpeg = resolve_binary("ffmpeg");
-    let say = Path::new("/usr/bin/say").exists();
     let data_dir = ensure_data_dir(&app)?;
+    let local_ffmpeg = data_dir.join("runtime").join("bin").join("ffmpeg");
+    let ffmpeg = resolve_binary("ffmpeg").or_else(|| local_ffmpeg.is_file().then_some(local_ffmpeg));
+    let say = Path::new("/usr/bin/say").exists();
     let (ollama_available, ollama_models) = ollama_models().await;
 
     Ok(SystemStatus {
@@ -219,11 +220,14 @@ fn create_tts(app: tauri::AppHandle, text: String, voice: String) -> Result<Stri
 
 #[tauri::command]
 async fn render_vertical_video(app: tauri::AppHandle, image_url: String, audio_path: String) -> Result<String, String> {
-    let ffmpeg = resolve_binary("ffmpeg").ok_or_else(|| "FFmpeg wurde nicht gefunden. Installiere es mit: brew install ffmpeg".to_string())?;
+    let dir = ensure_data_dir(&app)?;
+    let local_ffmpeg = dir.join("runtime").join("bin").join("ffmpeg");
+    let ffmpeg = resolve_binary("ffmpeg")
+        .or_else(|| local_ffmpeg.is_file().then_some(local_ffmpeg))
+        .ok_or_else(|| "FFmpeg wurde nicht gefunden. Richte es in den Einstellungen ein.".to_string())?;
     if !Path::new(&audio_path).exists() {
         return Err("TTS-Audiodatei wurde nicht gefunden.".into());
     }
-    let dir = ensure_data_dir(&app)?;
     let image_path = dir.join(format!("visual-{}.img", timestamp()));
     download_to(&image_url, &image_path).await?;
     let output = dir.join(format!("tiktok-news-{}.mp4", timestamp()));

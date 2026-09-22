@@ -10,6 +10,7 @@ import {
   useNodesState,
   useReactFlow,
   type Connection,
+  type Edge,
   type Node
 } from '@xyflow/react';
 import InspectorPanel from './components/InspectorPanel';
@@ -28,7 +29,7 @@ import {
 import { createFlowNode } from './flow/catalog';
 import { DEFAULT_EDGES, DEFAULT_NODES } from './flow/defaultFlow';
 import { createExecutionPlan, validateNewsFlow } from './flow/engine';
-import type { Edge, MediaResult, NewsArticle, NodeConfig, NodeStatus, StudioNodeData, SystemStatus } from './types';
+import type { MediaResult, NewsArticle, NodeConfig, NodeStatus, StudioNodeData, SystemStatus } from './types';
 
 type StoredProject = { id: string; title: string; nodes: Node<StudioNodeData>[]; edges: Edge[]; model: string; updatedAt: string };
 

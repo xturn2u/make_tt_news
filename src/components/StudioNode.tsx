@@ -1,7 +1,9 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { StudioNodeData } from '../types';
 
-export default function StudioNode({ data, selected }: NodeProps) {
+type Props = NodeProps & { onStartFrom?: (nodeId: string) => void };
+
+export default function StudioNode({ data, selected, id, onStartFrom }: Props) {
   const typed = data as StudioNodeData;
 
   return (
@@ -14,6 +16,7 @@ export default function StudioNode({ data, selected }: NodeProps) {
         <span>{typed.subtitle}</span>
         {typed.detail && <small className="node-detail">{typed.detail}</small>}
       </div>
+      {onStartFrom && <button className="node-start-button" type="button" title="Workflow ab hier starten" onClick={(event) => { event.stopPropagation(); onStartFrom(id); }}>▶</button>}
       <div className="node-status-dot" title={typed.status} />
       {typed.providesOutput && <Handle type="source" position={Position.Right} />}
     </div>

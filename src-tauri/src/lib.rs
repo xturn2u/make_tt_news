@@ -168,6 +168,7 @@ async fn wikimedia_search(query: String, limit: u8) -> Result<Vec<MediaResult>, 
             ("iiprop", "url|extmetadata"),
             ("iiurlwidth", "900"),
             ("format", "json"),
+            ("origin", "*"),
         ])
         .send()
         .await
@@ -310,7 +311,8 @@ async fn ollama_models() -> (bool, Vec<String>) {
 fn http_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .user_agent("TikTokNewsStudioLocal/0.1 (+https://github.com/xturn2u/make_tt_news)")
-        .timeout(Duration::from_secs(75))
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(25))
         .build()
         .map_err(|e| e.to_string())
 }

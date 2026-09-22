@@ -222,6 +222,11 @@ function Studio() {
         const node = nodes.find((item) => item.id === nodeId);
         if (!node) continue;
 
+        if (debugStops && breakpoints[node.id]) {
+          setNodeStatus(node.id, 'warning', 'Debug-Haltepunkt');
+          addLog(`Debug-Haltepunkt vor ${node.data.title}.`);
+          return;
+        }
         setNodeStatus(node.id, 'running', 'Wird ausgeführt …');
         const moduleId = node.data.moduleId;
         const config = node.data.config;
@@ -231,6 +236,7 @@ function Studio() {
           if (!url) throw new Error('Im News-URL-Node fehlt der Nachrichten-Link.');
           ctx.url = url;
           setNodeStatus(node.id, 'success', new URL(url).hostname);
+          setNodeResult(node.id, { kind: 'text', value: url, label: 'News URL' });
           continue;
         }
 
@@ -244,6 +250,7 @@ function Studio() {
           }
           setNodeStatus(node.id, 'success', `${ctx.article.wordCount} Wörter · ${ctx.article.siteName}`);
           addLog(`Artikel geladen: ${ctx.article.title}`);
+          setNodeResult(node.id, { kind: 'text', value: ctx.article.text, label: ctx.article.title });
           continue;
         }
 
@@ -271,6 +278,7 @@ function Studio() {
             setNodeStatus(node.id, 'warning', 'Fallback ohne generative KI');
           }
           addLog('Sprechertext erzeugt.');
+          setNodeResult(node.id, { kind: 'text', value: ctx.script, label: 'Sprechertext' });
           continue;
         }
 
@@ -284,6 +292,7 @@ function Studio() {
             ctx.assetQuery = deriveQuery(ctx.article);
             setNodeStatus(node.id, 'warning', ctx.assetQuery);
           }
+          setNodeResult(node.id, { kind: 'text', value: ctx.assetQuery ?? '', label: 'Suchbegriff' });
           continue;
         }
 
@@ -297,12 +306,14 @@ function Studio() {
           setMemoryItems(results);
           setNodeStatus(node.id, 'success', `${results.length} Treffer · ${ctx.asset.license}`);
           addLog(`Asset Search: ${results.length} Treffer für „${query}“.`);
+          setNodeResult(node.id, { kind: 'media', value: JSON.stringify(results), label: `${results.length} Assets` });
           continue;
         }
 
         if (moduleId === 'memory-card') {
           setNodeStatus(node.id, 'success', `${memoryItems.length || ctx.assets?.length || 0} Medien im Speicher`);
           addLog('Memory Card für weitere Flow-Schritte bereit.');
+          setNodeResult(node.id, { kind: 'media', value: JSON.stringify(ctx.assets ?? []), label: `${ctx.assets?.length ?? memoryItems.length} Assets gespeichert` });
           continue;
         }
 
@@ -317,6 +328,7 @@ function Studio() {
           } else {
             setNodeStatus(node.id, 'warning', 'Prompt gespeichert · lokale KI nicht aktiv');
           }
+          setNodeResult(node.id, { kind: 'text', value: ctx.research ?? '', label: String(config.name ?? 'Freier Agent') });
           continue;
         }
 
@@ -324,6 +336,7 @@ function Studio() {
           if (!ctx.script) throw new Error('TTS benötigt einen Sprechertext.');
           ctx.audioPath = await createTts(ctx.script, String(config.voice ?? ''));
           setNodeStatus(node.id, 'success', 'Lokale Audiodatei erstellt');
+          setNodeResult(node.id, { kind: 'audio', value: ctx.audioPath, label: 'TTS-Vorschau' });
           continue;
         }
 
@@ -331,6 +344,7 @@ function Studio() {
           if (!ctx.audioPath || !ctx.script) throw new Error('Captions benötigen Sprechertext und TTS-Audio.');
           setNodeStatus(node.id, 'warning', 'Untertitel aus TTS-Sprechgeschwindigkeit vorbereitet');
           addLog('Captions werden aus TTS-Audio und Timing abgeleitet.');
+          setNodeResult(node.id, { kind: 'text', value: 'Untertitel-Timing aus TTS-Sprechgeschwindigkeit vorbereitet.', label: 'Captions' });
           continue;
         }
 
@@ -340,17 +354,20 @@ function Studio() {
           ctx.videoPath = await renderVerticalVideo(ctx.asset.originalUrl, ctx.audioPath);
           setNodeStatus(node.id, 'success', '1080 × 1920 MP4');
           addLog('Video lokal gerendert.');
+          setNodeResult(node.id, { kind: 'file', value: ctx.videoPath, label: 'MP4-Video' });
           continue;
         }
 
         if (moduleId === 'qc-agent') {
           if (!ctx.videoPath) throw new Error('QC Agent benötigt ein gerendertes Video.');
           setNodeStatus(node.id, 'success', 'Basisprüfung bestanden');
+          setNodeResult(node.id, { kind: 'text', value: 'Basisprüfung bestanden.', label: 'QC' });
           continue;
         }
 
         if (moduleId === 'router') {
           setNodeStatus(node.id, 'skipped', 'Logic Runtime folgt in V1.1');
+          setNodeResult(node.id, { kind: 'text', value: 'Logic Runtime folgt in V1.1.', label: 'Router' });
           continue;
         }
 
@@ -358,6 +375,7 @@ function Studio() {
           if (!ctx.videoPath) throw new Error('Export benötigt ein gerendertes Video.');
           setOutputPath(ctx.videoPath);
           setNodeStatus(node.id, 'success', ctx.videoPath.split('/').pop() ?? 'MP4');
+          setNodeResult(node.id, { kind: 'file', value: ctx.videoPath, label: 'Export' });
           continue;
         }
 
@@ -373,7 +391,7 @@ function Studio() {
     } finally {
       setRunning(false);
     }
-  }, [addLog, edges, health, model, nodes, projectTitle, running, setNodeStatus, setNodes]);
+  }, [addLog, breakpoints, debugStops, edges, health, memoryItems.length, model, nodes, projectTitle, running, setNodeResult, setNodeStatus, setNodes]);
 
   const generateVersions = useCallback((nodeId: string, count: number) => {
     const total = Math.max(1, Math.min(5, Math.round(count)));

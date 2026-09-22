@@ -396,7 +396,7 @@ function Studio() {
   const generateVersions = useCallback((nodeId: string, count: number) => {
     const total = Math.max(1, Math.min(5, Math.round(count)));
     if (total < 2) { addLog('Für zusätzliche Flow-Bahnen mindestens 2 Versionen wählen.'); return; }
-    const duplicateModules = new Set(['script-agent', 'storyboard-agent', 'asset-search', 'tts', 'captions', 'video-compose', 'qc-agent', 'export']);
+    const duplicateModules = new Set(['script-agent', 'storyboard-agent', 'asset-search', 'memory-card', 'tts', 'captions', 'video-compose', 'qc-agent', 'export']);
     const originals = nodes.filter((node) => duplicateModules.has(node.data.moduleId));
     const newNodes: Node<StudioNodeData>[] = [];
     const newEdges: Edge[] = [];

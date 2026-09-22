@@ -6,9 +6,12 @@ type Props = {
   health: SystemStatus | null;
   onChangeConfig: (nodeId: string, config: NodeConfig) => void;
   onDelete: (nodeId: string) => void;
+  onStartFrom: (nodeId: string) => void;
+  onGenerateVersions: (nodeId: string, count: number) => void;
+  onOpenVideoEditor: (nodeId: string) => void;
 };
 
-export default function InspectorPanel({ node, health, onChangeConfig, onDelete }: Props) {
+export default function InspectorPanel({ node, health, onChangeConfig, onDelete, onStartFrom, onGenerateVersions, onOpenVideoEditor }: Props) {
   if (!node) {
     return (
       <aside className="inspector">
@@ -46,12 +49,16 @@ export default function InspectorPanel({ node, health, onChangeConfig, onDelete 
         </div>
       </div>
 
+      <div className="inspector-actions"><button className="button primary" onClick={() => onStartFrom(node.id)}>▶ Ab hier starten</button>{node.data.moduleId === 'video-compose' && <button className="button ghost" onClick={() => onOpenVideoEditor(node.id)}>✎ Video Composer öffnen</button>}</div>
+
       <div className="inspector-fields">
         {Object.entries(config).length === 0 && <p className="muted">Für dieses Modul sind aktuell keine Parameter notwendig.</p>}
         {Object.entries(config).map(([key, value]) => (
           <ConfigField key={key} name={key} value={value} onChange={(next) => update(key, next)} />
         ))}
       </div>
+
+      {node.data.moduleId === 'script-agent' && <div className="version-generator"><p className="eyebrow">VIDEO-VARIANTEN</p><p>Erzeugt ab diesem Script Agent vollständige zusätzliche Flow-Bahnen.</p><button className="button primary" onClick={() => onGenerateVersions(node.id, Number(config.versions ?? 3))}>Varianten einfügen</button></div>}
 
       {node.data.moduleId.includes('agent') && (
         <div className="runtime-card">
@@ -112,7 +119,12 @@ function pretty(value: string) {
     height: 'Höhe',
     strict: 'Strenge Prüfung',
     condition: 'Bedingung',
-    filename: 'Dateiname'
+    filename: 'Dateiname',
+    versions: 'Anzahl Versionen',
+    name: 'Agent-Name',
+    source: 'Materialquelle',
+    timing: 'Timingquelle',
+    wordsPerLine: 'Wörter pro Zeile'
   };
   return labels[value] ?? value;
 }

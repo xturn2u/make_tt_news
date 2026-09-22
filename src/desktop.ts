@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { MediaResult, ReplicateResult, SystemStatus } from './types';
+import type { MediaResult, NewsArticle, ReplicateResult, SystemStatus } from './types';
 
 const inTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -16,6 +16,21 @@ export async function systemStatus(): Promise<SystemStatus> {
     };
   }
   return invoke<SystemStatus>('system_status');
+}
+
+export async function fetchNewsArticle(url: string): Promise<NewsArticle> {
+  if (!inTauri()) {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`News HTTP ${response.status}`);
+    const html = await response.text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    doc.querySelectorAll('script,style,svg,noscript,template').forEach((element) => element.remove());
+    const root = doc.querySelector('article') ?? doc.querySelector('main') ?? doc.body;
+    const text = (root?.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 45000);
+    const title = (doc.querySelector('title')?.textContent ?? new URL(url).hostname).trim();
+    return { url, title, text, siteName: new URL(url).hostname.replace(/^www\./, ''), wordCount: text.split(/\s+/).filter(Boolean).length };
+  }
+  return invoke<NewsArticle>('fetch_news_article', { url });
 }
 
 export async function ollamaGenerate(model: string, prompt: string): Promise<string> {

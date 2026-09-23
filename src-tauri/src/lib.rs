@@ -117,8 +117,20 @@ async fn install_local_tts(app: tauri::AppHandle, provider: String) -> Result<St
     if !upgrade.status.success() { return Err(format!("Python-Paketmanager konnte nicht aktualisiert werden: {}", String::from_utf8_lossy(&upgrade.stderr).trim())); }
     let install = Command::new(&vpy).args(["-m", "pip", "install", "--upgrade", "--prefer-binary", package]).output().map_err(|e| format!("Lokale TTS-Abhängigkeiten konnten nicht installiert werden: {e}"))?;
     if !install.status.success() {
-        let detail = String::from_utf8_lossy(&install.stderr).lines().rev().take(8).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" ");
-        return Err(format!("Installation von {package} fehlgeschlagen: {detail}"));
+        // qwen-tts currently pins a large dependency set. On macOS/Python
+        // versions with a resolver conflict, install its runtime in two
+        // explicit phases so pip does not reject otherwise usable wheels.
+        if provider == "qwen3-tts" {
+            let base = Command::new(&vpy).args(["-m", "pip", "install", "--upgrade", "--prefer-binary", "torch", "torchaudio", "transformers==4.57.3", "accelerate", "soundfile", "librosa", "einops", "onnxruntime"]).output().map_err(|e| format!("Qwen-Laufzeit konnte nicht installiert werden: {e}"))?;
+            let qwen = Command::new(&vpy).args(["-m", "pip", "install", "--upgrade", "--no-deps", "qwen-tts==0.1.1"]).output().map_err(|e| format!("Qwen-TTS konnte nicht installiert werden: {e}"))?;
+            if base.status.success() && qwen.status.success() { /* continue */ } else {
+                let detail = String::from_utf8_lossy(if !base.status.success() { &base.stderr } else { &qwen.stderr }).lines().rev().take(10).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" ");
+                return Err(format!("Qwen-TTS konnte nicht installiert werden: {detail}"));
+            }
+        } else {
+            let detail = String::from_utf8_lossy(&install.stderr).lines().rev().take(8).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" ");
+            return Err(format!("Installation von {package} fehlgeschlagen: {detail}"));
+        }
     }
     let runner = include_str!("../resources/local_tts_runner.py");
     fs::write(root.join("runner.py"), runner).map_err(|e| e.to_string())?;

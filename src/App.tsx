@@ -77,6 +77,8 @@ function Studio() {
   const cancelRequested = useRef(false);
   const [outputPath, setOutputPath] = useState('');
   const [logs, setLogs] = useState<string[]>(['ContentFlow Studio bereit.']);
+  const [agentActivity, setAgentActivity] = useState<Record<string, string[]>>({});
+  const cancelRejectRef = useRef<(() => void) | null>(null);
   const { screenToFlowPosition } = useReactFlow();
 
   const selectedNode = useMemo(
@@ -93,6 +95,13 @@ function Studio() {
 
   const addLog = useCallback((message: string) => {
     setLogs((current) => [`${new Date().toLocaleTimeString('de-DE')} · ${message}`, ...current].slice(0, 80));
+  }, []);
+
+  const pushAgentActivity = useCallback((nodeId: string, message: string) => {
+    setAgentActivity((current) => ({
+      ...current,
+      [nodeId]: [...(current[nodeId] ?? []), `${new Date().toLocaleTimeString('de-DE')} · ${message}`].slice(-80)
+    }));
   }, []);
 
   const setNodeResult = useCallback((nodeId: string, result?: StepResult) => {
@@ -210,6 +219,8 @@ function Studio() {
     const executionOrder = startNodeId ? plan.order.slice(Math.max(0, plan.order.indexOf(startNodeId))) : plan.order;
     cancelRequested.current = false;
     setRunning(true);
+    const cancellation = new Promise<never>((_, reject) => { cancelRejectRef.current = () => reject(new Error('Workflow vom Benutzer abgebrochen.')); });
+    const cancellable = <T,>(promise: Promise<T>) => Promise.race([promise, cancellation]);
     setOutputPath('');
     setNodes((current) => current.map((node) => ({ ...node, data: { ...node.data, status: 'idle' as NodeStatus, detail: undefined } })));
     addLog(`${startNodeId ? 'Flow ab' : 'Flow'} gestartet: ${executionOrder.length} Module.`);
@@ -228,6 +239,7 @@ function Studio() {
           return;
         }
         setNodeStatus(node.id, 'running', 'Wird ausgeführt …');
+        if (node.data.category === 'agent') pushAgentActivity(node.id, `Schritt gestartet · Modell ${model || 'Fallback'}`);
         const moduleId = node.data.moduleId;
         const config = node.data.config;
 
@@ -242,9 +254,9 @@ function Studio() {
 
         if (moduleId === 'article-reader') {
           if (!ctx.url) throw new Error('Artikel laden benötigt eine News URL.');
-          ctx.article = await fetchNewsArticle(ctx.url);
+          ctx.article = await cancellable(fetchNewsArticle(ctx.url));
           if (!projectTitle || projectTitle === 'Neues Projekt') {
-            const generatedTitle = health?.ollamaAvailable && model ? normalizeProjectTitle(await ollamaGenerate(model, buildProjectTitlePrompt(ctx.article))) : ctx.article.title;
+            const generatedTitle = health?.ollamaAvailable && model ? normalizeProjectTitle(await cancellable(ollamaGenerate(model, buildProjectTitlePrompt(ctx.article)))) : ctx.article.title;
             setProjectTitle(generatedTitle || ctx.article.title);
             addLog(`Projekttitel gesetzt: ${generatedTitle || ctx.article.title}`);
           }
@@ -258,12 +270,16 @@ function Studio() {
           if (!ctx.article) throw new Error('Research Agent benötigt einen geladenen Artikel.');
           const instruction = String(config.prompt ?? '');
           if (health?.ollamaAvailable && model) {
-            ctx.research = await ollamaGenerate(model, buildResearchPrompt(ctx.article, instruction));
+            pushAgentActivity(node.id, 'Prompt wird an Ollama gesendet …');
+            ctx.research = await cancellable(ollamaGenerate(model, buildResearchPrompt(ctx.article, instruction)));
             setNodeStatus(node.id, 'success', model);
           } else {
+            pushAgentActivity(node.id, 'Lokale KI nicht erreichbar · Fallback wird verwendet.');
             ctx.research = ctx.article.text;
             setNodeStatus(node.id, 'warning', 'Lokale KI nicht aktiv · Quelltext weitergegeben');
           }
+          setNodeResult(node.id, { kind: 'text', value: ctx.research ?? '', label: 'Research-Ergebnis' });
+          pushAgentActivity(node.id, 'Ergebnis übernommen.');
           continue;
         }
 
@@ -271,7 +287,8 @@ function Studio() {
           if (!ctx.article) throw new Error('Script Agent benötigt Artikeldaten.');
           const duration = Number(config.duration ?? 55);
           if (health?.ollamaAvailable && model) {
-            ctx.script = await ollamaGenerate(model, buildScriptPrompt(ctx.article, ctx.research ?? ctx.article.text, duration, String(config.style ?? 'seriös')));
+            pushAgentActivity(node.id, 'Sprechertext-Prompt wird verarbeitet …');
+            ctx.script = await cancellable(ollamaGenerate(model, buildScriptPrompt(ctx.article, ctx.research ?? ctx.article.text, duration, String(config.style ?? 'seriös'))));
             setNodeStatus(node.id, 'success', `${model} · ~${duration}s`);
           } else {
             ctx.script = fallbackScript(ctx.article, duration);
@@ -279,13 +296,14 @@ function Studio() {
           }
           addLog('Sprechertext erzeugt.');
           setNodeResult(node.id, { kind: 'text', value: ctx.script, label: 'Sprechertext' });
+          pushAgentActivity(node.id, 'Sprechertext bereit.');
           continue;
         }
 
         if (moduleId === 'storyboard-agent') {
           if (!ctx.article) throw new Error('Storyboard Agent benötigt Artikeldaten.');
           if (health?.ollamaAvailable && model) {
-            const response = await ollamaGenerate(model, buildStoryboardPrompt(ctx.article, ctx.script ?? '', Number(config.scenes ?? 6)));
+            const response = await cancellable(ollamaGenerate(model, buildStoryboardPrompt(ctx.article, ctx.script ?? '', Number(config.scenes ?? 6))));
             ctx.assetQuery = normalizeSearchQuery(response) || deriveQuery(ctx.article);
             setNodeStatus(node.id, 'success', ctx.assetQuery);
           } else {
@@ -299,7 +317,7 @@ function Studio() {
         if (moduleId === 'asset-search') {
           if (!ctx.article) throw new Error('Asset Search benötigt Artikeldaten.');
           const query = String(config.query ?? '').trim() || ctx.assetQuery || deriveQuery(ctx.article);
-          const results = await searchWikimedia(query, Number(config.limit ?? 8));
+          const results = await cancellable(searchWikimedia(query, Number(config.limit ?? 8)));
           if (!results.length) throw new Error(`Keine Medien für „${query}“ gefunden.`);
           ctx.assets = results;
           ctx.asset = results[0];
@@ -322,7 +340,7 @@ function Studio() {
           const input = ctx.script ?? ctx.research ?? ctx.article?.text ?? '';
           if (!prompt) throw new Error('Der freie Agent benötigt einen Prompt.');
           if (health?.ollamaAvailable && model) {
-            const result = await ollamaGenerate(model, `${prompt}\n\nEINGABE:\n${input}`);
+            const result = await cancellable(ollamaGenerate(model, `${prompt}\n\nEINGABE:\n${input}`));
             ctx.research = result;
             setNodeStatus(node.id, 'success', String(config.name ?? 'Freier Agent'));
           } else {
@@ -334,7 +352,7 @@ function Studio() {
 
         if (moduleId === 'tts') {
           if (!ctx.script) throw new Error('TTS benötigt einen Sprechertext.');
-          ctx.audioPath = await createTts(ctx.script, String(config.voice ?? ''));
+          ctx.audioPath = await cancellable(createTts(ctx.script, String(config.voice ?? '')));
           setNodeStatus(node.id, 'success', 'Lokale Audiodatei erstellt');
           setNodeResult(node.id, { kind: 'audio', value: ctx.audioPath, label: 'TTS-Vorschau' });
           continue;
@@ -351,7 +369,7 @@ function Studio() {
         if (moduleId === 'video-compose') {
           if (!ctx.asset || !ctx.audioPath) throw new Error('Video Composer benötigt Asset und TTS-Audio.');
           if (!health?.ffmpegAvailable) throw new Error('FFmpeg fehlt auf diesem Mac.');
-          ctx.videoPath = await renderVerticalVideo(ctx.asset.originalUrl, ctx.audioPath);
+          ctx.videoPath = await cancellable(renderVerticalVideo(ctx.asset.originalUrl, ctx.audioPath));
           setNodeStatus(node.id, 'success', '1080 × 1920 MP4');
           addLog('Video lokal gerendert.');
           setNodeResult(node.id, { kind: 'file', value: ctx.videoPath, label: 'MP4-Video' });
@@ -389,9 +407,10 @@ function Studio() {
       if (activeId) setNodeStatus(activeId, 'error', message);
       addLog(`Flow gestoppt: ${message}`);
     } finally {
+      cancelRejectRef.current = null;
       setRunning(false);
     }
-  }, [addLog, breakpoints, debugStops, edges, health, memoryItems.length, model, nodes, projectTitle, running, setNodeResult, setNodeStatus, setNodes]);
+  }, [addLog, breakpoints, debugStops, edges, health, memoryItems.length, model, nodes, projectTitle, pushAgentActivity, running, setNodeResult, setNodeStatus, setNodes]);
 
   const generateVersions = useCallback((nodeId: string, count: number) => {
     const total = Math.max(1, Math.min(5, Math.round(count)));
@@ -438,7 +457,8 @@ function Studio() {
   const cancelFlow = useCallback(() => {
     if (!running) return;
     cancelRequested.current = true;
-    addLog('Abbruch angefordert … der aktuelle Schritt wird sauber beendet.');
+    cancelRejectRef.current?.();
+    addLog('Abbruch ausgeführt. Der aktuelle Agentenschritt wird beendet …');
   }, [addLog, running]);
 
   const toggleDebug = useCallback((enabled: boolean) => {

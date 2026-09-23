@@ -57,7 +57,7 @@ export default function InspectorPanel({ node, health, onChangeConfig, onDelete,
         </div>
       </div>
 
-      <div className="inspector-actions"><button className="button primary" onClick={() => onStartFrom(node.id)}>▶ Ab hier starten</button>{node.data.moduleId === 'video-compose' && <button className="button ghost" onClick={() => onOpenVideoEditor(node.id)}>✎ Video Composer öffnen</button>}</div>
+      <div className="inspector-actions"><button className="button primary" onClick={() => onStartFrom(node.id)}>▶ Ab hier starten</button><button className="button danger-inline" onClick={() => onDelete(node.id)}>Node entfernen</button>{node.data.moduleId === 'video-compose' && <button className="button ghost" onClick={() => onOpenVideoEditor(node.id)}>✎ Video Composer öffnen</button>}</div>
 
       {node.data.needsInput && <div className="intervention-card">
         <div className="intervention-title"><span>!</span><div><strong>Manuelle Eingabe erforderlich</strong><small>{node.data.needsInput.message}</small></div></div>
@@ -73,7 +73,7 @@ export default function InspectorPanel({ node, health, onChangeConfig, onDelete,
       <div className="inspector-fields">
         {Object.entries(config).length === 0 && <p className="muted">Für dieses Modul sind aktuell keine Parameter notwendig.</p>}
         {Object.entries(config).map(([key, value]) => (
-          <ConfigField key={key} name={key} value={value} onChange={(next) => update(key, next)} />
+          <ConfigField key={key} name={key} value={value} options={key === 'voice' ? (health?.ttsVoices ?? []) : undefined} onChange={(next) => update(key, next)} />
         ))}
       </div>
 
@@ -95,6 +95,8 @@ export default function InspectorPanel({ node, health, onChangeConfig, onDelete,
 
       {node.data.moduleId === 'script-agent' && <div className="version-generator"><p className="eyebrow">VIDEO-VARIANTEN</p><p>Erzeugt ab diesem Script Agent vollständige zusätzliche Flow-Bahnen.</p><button className="button primary" onClick={() => onGenerateVersions(node.id, Number(config.versions ?? 3))}>Varianten einfügen</button></div>}
 
+      {node.data.moduleId === 'tts' && !(health?.ttsVoices?.length) && <p className="muted tts-help">Keine Stimmenliste verfügbar. macOS verwendet die Standardsprache.</p>}
+
       {node.data.moduleId.includes('agent') && (
         <div className="agent-console">
           <div className="agent-console-head"><p className="eyebrow">AGENT CONSOLE</p><span>Ausführungsstatus und Prompt-Antworten</span></div>
@@ -114,12 +116,14 @@ export default function InspectorPanel({ node, health, onChangeConfig, onDelete,
         </div>
       )}
 
-      <button className="danger-button" onClick={() => onDelete(node.id)}>Node entfernen</button>
-    </aside>
+          </aside>
   );
 }
 
-function ConfigField({ name, value, onChange }: { name: string; value: string | number | boolean; onChange: (value: string | number | boolean) => void }) {
+function ConfigField({ name, value, options, onChange }: { name: string; value: string | number | boolean; options?: string[]; onChange: (value: string | number | boolean) => void }) {
+  if (name === 'voice' && typeof value === 'string') {
+    return <label className="field"><span>Stimme</span><select value={value} onChange={(event) => onChange(event.target.value)}><option value="">Systemstandard</option>{options?.map((voice) => <option key={voice} value={voice}>{voice}</option>)}</select></label>;
+  }
   const label = pretty(name);
 
   if (typeof value === 'boolean') {

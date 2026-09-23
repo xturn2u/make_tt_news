@@ -105,7 +105,7 @@ async fn install_local_tts(app: tauri::AppHandle, provider: String) -> Result<St
     let data_dir = ensure_data_dir(&app)?;
     let root = local_tts_root(&data_dir, &provider);
     fs::create_dir_all(&root).map_err(|e| format!("TTS-Verzeichnis konnte nicht angelegt werden: {e}"))?;
-    let python = if resolve_binary("python3").is_some() { "python3" } else { "python" };
+    let python = ["python3.12", "python3", "python"].iter().find(|candidate| resolve_binary(candidate).is_some()).copied().ok_or("Python 3 ist auf diesem Mac nicht verfügbar.")?;
     let venv = root.join("venv");
     if !venv.join("bin").join("python").is_file() {
         let status = Command::new(python).args(["-m", "venv"]).arg(&venv).status().map_err(|e| format!("Python-Runtime konnte nicht gestartet werden: {e}"))?;
@@ -113,8 +113,13 @@ async fn install_local_tts(app: tauri::AppHandle, provider: String) -> Result<St
     }
     let vpy = venv.join("bin").join("python");
     let package = match provider.as_str() { "qwen3-tts" => "qwen-tts", "chatterbox" => "chatterbox-tts", _ => return Err("Unbekannter lokaler TTS-Provider.".into()) };
-    let status = Command::new(&vpy).args(["-m", "pip", "install", "--upgrade", package]).status().map_err(|e| format!("Lokale TTS-Abhängigkeiten konnten nicht installiert werden: {e}"))?;
-    if !status.success() { return Err(format!("Installation von {package} fehlgeschlagen.")); }
+    let upgrade = Command::new(&vpy).args(["-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"]).output().map_err(|e| format!("Python-Paketmanager konnte nicht gestartet werden: {e}"))?;
+    if !upgrade.status.success() { return Err(format!("Python-Paketmanager konnte nicht aktualisiert werden: {}", String::from_utf8_lossy(&upgrade.stderr).trim())); }
+    let install = Command::new(&vpy).args(["-m", "pip", "install", "--upgrade", "--prefer-binary", package]).output().map_err(|e| format!("Lokale TTS-Abhängigkeiten konnten nicht installiert werden: {e}"))?;
+    if !install.status.success() {
+        let detail = String::from_utf8_lossy(&install.stderr).lines().rev().take(8).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" ");
+        return Err(format!("Installation von {package} fehlgeschlagen: {detail}"));
+    }
     let runner = include_str!("../resources/local_tts_runner.py");
     fs::write(root.join("runner.py"), runner).map_err(|e| e.to_string())?;
     fs::write(root.join(".installed"), format!("provider={provider}\npackage={package}\n")).map_err(|e| e.to_string())?;

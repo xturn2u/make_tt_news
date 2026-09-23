@@ -106,12 +106,16 @@ export type ModelCatalogItem = {
   description: string;
   size: string;
   recommended?: boolean;
+  runtime: 'ollama' | 'mlx' | 'mflux';
+  kind: 'llm' | 'image';
 };
 
 export const MODEL_CATALOG: ModelCatalogItem[] = [
-  { id: 'qwen2.5:7b', name: 'Qwen 2.5 · 7B', description: 'Starkes mehrsprachiges Modell für Recherche und deutsche Skripte.', size: '~4,7 GB', recommended: true },
-  { id: 'llama3.2:3b', name: 'Llama 3.2 · 3B', description: 'Schneller und sparsamer Einstieg für kleinere Macs.', size: '~2,0 GB' },
-  { id: 'mistral:7b', name: 'Mistral · 7B', description: 'Schnelles allgemeines Modell für lokale Workflows.', size: '~4,1 GB' }
+  { id: 'qwen3.5:4b', name: 'Qwen 3.5 · 4B', description: 'Empfohlenes M1-Profil für Recherche, deutsche Sprechertexte und strukturierte Ausgaben.', size: '~3,0 GB · 4-bit', recommended: true, runtime: 'ollama', kind: 'llm' },
+  { id: 'mlx-community/Qwen3.5-4B-MLX-4bit', name: 'Qwen 3.5 · 4B MLX', description: 'Apple-Silicon-optimierte 4-bit MLX-Variante für den lokalen LLM-Adapter.', size: '~3,0 GB · MLX 4-bit', runtime: 'mlx', kind: 'llm' },
+  { id: 'flux2-klein-4b', name: 'FLUX.2 Klein · 4B', description: 'Empfohlenes M1-Bildprofil für Text-to-Image und Bildbearbeitung mit MFLUX.', size: '~4,4 GB · MFLUX 4-bit', recommended: true, runtime: 'mflux', kind: 'image' },
+  { id: 'llama3.2:3b', name: 'Llama 3.2 · 3B', description: 'Sparsamer Ollama-Einstieg für kleinere Macs.', size: '~2,0 GB', runtime: 'ollama', kind: 'llm' },
+  { id: 'mistral:7b', name: 'Mistral · 7B', description: 'Allgemeines Ollama-Modell für lokale Workflows.', size: '~4,1 GB', runtime: 'ollama', kind: 'llm' }
 ];
 
 export async function pullOllamaModel(model: string, onProgress?: (status: string) => void): Promise<void> {

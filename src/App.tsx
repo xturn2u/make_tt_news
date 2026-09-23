@@ -780,7 +780,7 @@ function readStoredProjects(): StoredProject[] {
 }
 
 function ProcessPopover({ node, activity, paused }: { node: Node<StudioNodeData> | null; activity: string[]; paused: boolean }) {
-  const [position, setPosition] = useState({ x: 18, y: 18 });
+  const [position, setPosition] = useState({ x: 72, y: 18 });
   const [dragging, setDragging] = useState(false);
   useEffect(() => {
     if (!dragging) return undefined;

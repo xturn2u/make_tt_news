@@ -146,8 +146,14 @@ async fn create_local_tts(app: tauri::AppHandle, text: String, provider: String,
     if !local_tts_ready(&data_dir, &provider) { return Err(format!("{provider} ist noch nicht installiert. Richte ihn in den Einstellungen ein.")); }
     let output = data_dir.join(format!("voice-local-{}.wav", timestamp()));
     let vpy = root.join("venv").join("bin").join("python");
-    let status = Command::new(vpy).arg(root.join("runner.py")).args(["--provider", &provider, "--text", &text, "--output"]).arg(&output).args(["--voice", &voice, "--speed", &speed.to_string()]).status().map_err(|e| format!("Lokale TTS-Ausführung fehlgeschlagen: {e}"))?;
-    if !status.success() { return Err("Das lokale TTS-Modell konnte keinen Audiostream erzeugen.".into()); }
+    let result = Command::new(vpy).arg(root.join("runner.py")).args(["--provider", &provider, "--text", &text, "--output"]).arg(&output).args(["--voice", &voice, "--speed", &speed.to_string()]).output().map_err(|e| format!("Lokale TTS-Ausführung fehlgeschlagen: {e}"))?;
+    if !result.status.success() {
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        let detail = if stderr.trim().is_empty() { stdout.trim() } else { stderr.trim() };
+        return Err(format!("Lokales TTS konnte keinen Audiostream erzeugen: {}", tail(detail, 1200)));
+    }
+    if !output.is_file() { return Err("Lokales TTS meldete Erfolg, aber keine Audiodatei wurde erzeugt.".into()); }
     Ok(output.to_string_lossy().to_string())
 }
 

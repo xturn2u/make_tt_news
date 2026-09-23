@@ -25,11 +25,15 @@ def main():
     if args.provider == 'qwen3-tts':
         from qwen_tts import Qwen3TTSModel
         import soundfile as sf
-        model = Qwen3TTSModel.from_pretrained('Qwen/Qwen3-TTS-12Hz-0.6B-Base')
-        kwargs = {'text': args.text, 'language': 'German'}
-        if args.voice:
-            kwargs['ref_audio'] = args.voice
-        wavs, sr = model.generate_voice_clone(**kwargs)
+        model = Qwen3TTSModel.from_pretrained('Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice')
+        # CustomVoice provides selectable local speakers without an external API
+        speaker = args.voice or 'Ryan'
+        wavs, sr = model.generate_custom_voice(
+            text=args.text,
+            language='German',
+            speaker=speaker,
+            instruct='Sprich natürlich, klar und freundlich.'
+        )
         sf.write(args.output, wavs[0], sr)
         return
     raise SystemExit('Unbekannter lokaler TTS-Provider')

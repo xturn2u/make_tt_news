@@ -6,6 +6,23 @@ clear message when a provider changes its Python API rather than silently
 falling back to a cloud service.
 """
 import argparse
+import subprocess
+import sys
+
+
+def ensure_qwen_dependencies():
+    """Repair older installs that missed Qwen's Python sox dependency."""
+    try:
+        import sox  # noqa: F401
+    except ModuleNotFoundError:
+        result = subprocess.run(
+            [sys.executable, '-m', 'pip', 'install', '--upgrade', '--prefer-binary', 'sox'],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or '').strip().splitlines()[-5:]
+            raise RuntimeError('Python-Modul sox konnte nicht nachinstalliert werden: ' + ' '.join(detail))
+
 
 def main():
     p = argparse.ArgumentParser()
@@ -23,6 +40,7 @@ def main():
         torchaudio.save(args.output, wav.cpu(), model.sr)
         return
     if args.provider == 'qwen3-tts':
+        ensure_qwen_dependencies()
         from qwen_tts import Qwen3TTSModel
         import soundfile as sf
         import torch
@@ -42,6 +60,7 @@ def main():
         sf.write(args.output, wavs[0], sr)
         return
     raise SystemExit('Unbekannter lokaler TTS-Provider')
+
 
 if __name__ == '__main__':
     main()

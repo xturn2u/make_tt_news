@@ -780,9 +780,19 @@ function readStoredProjects(): StoredProject[] {
 }
 
 function ProcessPopover({ node, activity, paused }: { node: Node<StudioNodeData> | null; activity: string[]; paused: boolean }) {
+  const [position, setPosition] = useState({ x: 18, y: 18 });
+  const [dragging, setDragging] = useState(false);
+  useEffect(() => {
+    if (!dragging) return undefined;
+    const move = (event: PointerEvent) => setPosition((current) => ({ x: Math.max(8, current.x + event.movementX), y: Math.max(8, current.y - event.movementY) }));
+    const up = () => setDragging(false);
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up, { once: true });
+    return () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+  }, [dragging]);
   if (!node) return null;
   const lines = activity.length ? activity : [node.data.detail || 'Schritt wird ausgeführt …'];
-  return <aside className="process-popover" aria-live="polite"><div className="process-popover-head"><div><p className="eyebrow">AKTUELLER PROZESS</p><strong>{node.data.title}</strong></div><span className={paused ? 'paused' : 'live'}>{paused ? 'PAUSIERT' : '● LIVE'}</span></div><pre>{lines.slice(-8).join('\\n')}</pre></aside>;
+  return <aside className="process-popover" style={{ left: position.x, bottom: position.y, right: 'auto', cursor: dragging ? 'grabbing' : 'grab' }} aria-live="polite"><div className="process-popover-head" onPointerDown={(event) => { event.preventDefault(); setDragging(true); }}><div><p className="eyebrow">AKTUELLER PROZESS</p><strong>{node.data.title}</strong></div><span className={paused ? 'paused' : 'live'}>{paused ? 'PAUSIERT' : '● LIVE'}</span></div><pre>{lines.slice(-8).join('\\n')}</pre></aside>;
 }
 
 function ResultOverlay({ node, onClose, onSave }: { node: Node<StudioNodeData> | null; onClose: () => void; onSave: (value: string) => void }) {

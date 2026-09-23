@@ -20,6 +20,7 @@ import NodeLibrary from './components/NodeLibrary';
 import StudioNode from './components/StudioNode';
 import {
   createTts,
+  createLocalTts,
   fetchNewsArticle,
   mediaFileUrl,
   ollamaGenerate,
@@ -32,6 +33,7 @@ import { createFlowNode } from './flow/catalog';
 import { DEFAULT_EDGES, DEFAULT_NODES } from './flow/defaultFlow';
 import { createExecutionPlan, validateNewsFlow } from './flow/engine';
 import type { MediaResult, NewsArticle, NodeConfig, NodeStatus, StepResult, StudioNodeData, SystemStatus } from './types';
+import type { LocalTtsProvider } from './localTts';
 
 type StoredProject = { id: string; title: string; nodes: Node<StudioNodeData>[]; edges: Edge[]; model: string; updatedAt: string };
 
@@ -162,7 +164,7 @@ function Studio() {
       const status = await systemStatus();
       setHealth(status);
       setModel((current) => current || status.ollamaModels[0] || '');
-      addLog(`Systemcheck: Ollama ${status.ollamaAvailable ? 'OK' : 'aus'}, FFmpeg ${status.ffmpegAvailable ? 'OK' : 'fehlt'}, TTS ${status.sayAvailable ? 'OK' : 'fehlt'}.`);
+      addLog(`Systemcheck: Ollama ${status.ollamaAvailable ? 'OK' : 'aus'}, FFmpeg ${status.ffmpegAvailable ? 'OK' : 'fehlt'}, TTS ${status.sayAvailable || status.localTtsReady ? 'OK' : 'fehlt'}.`);
     } catch (error) {
       addLog(`Systemcheck fehlgeschlagen: ${errorText(error)}`);
     }
@@ -393,9 +395,18 @@ function Studio() {
 
         if (moduleId === 'tts') {
           if (!ctx.script) throw new Error('TTS benötigt einen Sprechertext.');
-          ctx.audioPath = await cancellable(createTts(ctx.script, String(config.voice ?? localStorage.getItem('contentflow.defaultVoice') ?? '')));
-          setNodeStatus(node.id, 'success', 'Lokale Audiodatei erstellt');
-          setNodeResult(node.id, { kind: 'audio', value: ctx.audioPath, label: 'TTS-Vorschau' });
+          const ttsMode = localStorage.getItem('contentflow.ttsMode') === 'local' ? 'local' : 'standard';
+          if (ttsMode === 'local') {
+            const provider = (localStorage.getItem('contentflow.localTtsProvider') || 'qwen3-tts') as LocalTtsProvider;
+            const voice = String(config.voice ?? localStorage.getItem('contentflow.localVoice') ?? 'Ryan');
+            ctx.audioPath = await cancellable(createLocalTts(ctx.script, provider, voice));
+            setNodeStatus(node.id, 'success', `Lokale KI-Stimme · ${voice}`);
+          } else {
+            const voice = String(config.voice ?? localStorage.getItem('contentflow.defaultVoice') ?? '');
+            ctx.audioPath = await cancellable(createTts(ctx.script, voice));
+            setNodeStatus(node.id, 'success', voice ? `Standardstimme · ${voice}` : 'Standardstimme erstellt');
+          }
+          setNodeResult(node.id, { kind: 'audio', value: ctx.audioPath, label: ttsMode === 'local' ? 'Lokale KI-TTS' : 'Standard-TTS' });
           continue;
         }
 
@@ -550,7 +561,7 @@ function Studio() {
   const badges = useMemo(() => [
     { label: 'Local AI', ok: !!health?.ollamaAvailable },
     { label: 'FFmpeg', ok: !!health?.ffmpegAvailable },
-    { label: 'TTS', ok: !!health?.sayAvailable }
+    { label: 'TTS', ok: !!health?.sayAvailable || !!health?.localTtsReady }
   ], [health]);
 
   return (

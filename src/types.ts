@@ -7,6 +7,7 @@ export type SystemStatus = {
   ffmpegAvailable: boolean;
   ffmpegPath: string | null;
   sayAvailable: boolean;
+  ttsVoices: string[];
   ollamaAvailable: boolean;
   ollamaModels: string[];
   dataDir: string;

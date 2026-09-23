@@ -667,3 +667,5 @@ button:disabled { cursor: default; opacity: .55; }
 .field select{width:100%;height:34px;padding:0 9px;border:1px solid var(--line);border-radius:8px;outline:none;color:#e7eaf0;background:#0b0d12;font-size:10px}
 .store-row{display:grid;grid-template-columns:minmax(0,1fr) 26px;gap:4px}.store-row button:first-child{min-width:0}.store-delete{padding:0!important;color:#ff9ba5!important;text-align:center!important}.flow-store-divider{height:1px;margin:5px 0;border-top:1px solid var(--line)}.tts-help{margin-top:8px}
 .process-popover{right:auto;pointer-events:auto;user-select:none}.process-popover-head{cursor:grab}.process-popover-head:active{cursor:grabbing}
+
+.voice-settings{align-items:flex-start}.voice-controls{display:grid;gap:7px;min-width:260px}.voice-controls select{width:100%;height:30px;padding:0 8px;border:1px solid var(--line);border-radius:7px;color:var(--text);background:#0a0c10;font-size:10px}.voice-preview-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px}.voice-preview-row button{height:30px;padding:0 9px}.voice-settings .audio-preview{height:28px;margin-top:2px}

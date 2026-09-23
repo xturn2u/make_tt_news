@@ -53,10 +53,21 @@ jobs:
         run: |
           test -d "src-tauri/target/universal-apple-darwin/release/bundle/macos/TikTok News Studio Local.app"
           test -x "src-tauri/target/universal-apple-darwin/release/bundle/macos/TikTok News Studio Local.app/Contents/MacOS/tiktok-news-studio-local"
+      - name: Create DMG installer
+        run: |
+          mkdir -p dist
+          cp -R "src-tauri/target/universal-apple-darwin/release/bundle/macos/TikTok News Studio Local.app" dist/
+          hdiutil create -volname "ContentFlow Studio" -srcfolder dist -ov -format UDZO "ContentFlow-Studio-macOS-universal.dmg"
+      - name: Upload DMG installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ContentFlow-Studio-macOS-universal-dmg
+          path: ContentFlow-Studio-macOS-universal.dmg
+          if-no-files-found: error
       - name: Upload app bundle directly
         uses: actions/upload-artifact@v4
         with:
-          name: TikTok-News-Studio-Local-macOS-universal
+          name: ContentFlow-Studio-macOS-universal-app
           path: src-tauri/target/universal-apple-darwin/release/bundle/macos/TikTok News Studio Local.app
           if-no-files-found: error
           include-hidden-files: true

@@ -146,7 +146,33 @@ async fn create_local_tts(app: tauri::AppHandle, text: String, provider: String,
     if !local_tts_ready(&data_dir, &provider) { return Err(format!("{provider} ist noch nicht installiert. Richte ihn in den Einstellungen ein.")); }
     let output = data_dir.join(format!("voice-local-{}.wav", timestamp()));
     let vpy = root.join("venv").join("bin").join("python");
-        // Migrate runtimes created by older app builds before invoking TTS.    let bundled_runner = include_str!("../resources/local_tts_runner.py");    fs::write(root.join("runner.py"), bundled_runner).map_err(|e| format!("TTS-Runner konnte nicht aktualisiert werden: {e}"))?;    if provider == "qwen3-tts" {        let probe = Command::new(&vpy).args(["-c", "import sox"]).output()            .map_err(|e| format!("Qwen-TTS-Abhängigkeit konnte nicht geprüft werden: {e}"))?;        if !probe.status.success() {            let repair = Command::new(&vpy)                .args(["-m", "pip", "install", "--upgrade", "--prefer-binary", "sox"])                .output()                .map_err(|e| format!("Python-Modul sox konnte nicht nachinstalliert werden: {e}"))?;            if !repair.status.success() {                let detail = String::from_utf8_lossy(&repair.stderr).trim().to_string();                return Err(format!("Python-Modul sox konnte nicht nachinstalliert werden: {detail}"));            }        }    }    let result = Command::new(vpy).arg(root.join("runner.py")).args(["--provider", &provider, "--text", &text, "--output"]).arg(&output).args(["--voice", &voice, "--speed", &speed.to_string()]).output().map_err(|e| format!("Lokale TTS-Ausführung fehlgeschlagen: {e}"))?;
+    // Migrate runtimes created by older app builds before invoking TTS.
+    let bundled_runner = include_str!("../resources/local_tts_runner.py");
+    fs::write(root.join("runner.py"), bundled_runner)
+        .map_err(|e| format!("TTS-Runner konnte nicht aktualisiert werden: {e}"))?;
+    if provider == "qwen3-tts" {
+        let probe = Command::new(&vpy)
+            .args(["-c", "import sox"])
+            .output()
+            .map_err(|e| format!("Qwen-TTS-Abhängigkeit konnte nicht geprüft werden: {e}"))?;
+        if !probe.status.success() {
+            let repair = Command::new(&vpy)
+                .args(["-m", "pip", "install", "--upgrade", "--prefer-binary", "sox"])
+                .output()
+                .map_err(|e| format!("Python-Modul sox konnte nicht nachinstalliert werden: {e}"))?;
+            if !repair.status.success() {
+                let detail = String::from_utf8_lossy(&repair.stderr).trim().to_string();
+                return Err(format!("Python-Modul sox konnte nicht nachinstalliert werden: {detail}"));
+            }
+        }
+    }
+    let result = Command::new(vpy)
+        .arg(root.join("runner.py"))
+        .args(["--provider", &provider, "--text", &text, "--output"])
+        .arg(&output)
+        .args(["--voice", &voice, "--speed", &speed.to_string()])
+        .output()
+        .map_err(|e| format!("Lokale TTS-Ausführung fehlgeschlagen: {e}"))?;
     if !result.status.success() {
         let stderr = String::from_utf8_lossy(&result.stderr);
         let stdout = String::from_utf8_lossy(&result.stdout);

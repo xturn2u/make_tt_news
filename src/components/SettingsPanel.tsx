@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { createTts, createLocalTts, installFfmpeg, installLocalTts, installOllama, mediaFileUrl, MODEL_CATALOG, pullOllamaModel, type ModelCatalogItem } from '../desktop';
 import { LOCAL_TTS_CATALOG, type LocalTtsProvider } from '../localTts';

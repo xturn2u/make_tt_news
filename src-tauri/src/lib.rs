@@ -18,6 +18,7 @@ struct SystemStatus {
     ffmpeg_available: bool,
     ffmpeg_path: Option<String>,
     say_available: bool,
+    tts_voices: Vec<String>,
     ollama_available: bool,
     ollama_models: Vec<String>,
     data_dir: String,
@@ -57,10 +58,21 @@ async fn system_status(app: tauri::AppHandle) -> Result<SystemStatus, String> {
         ffmpeg_available: ffmpeg.is_some(),
         ffmpeg_path: ffmpeg.map(|p| p.to_string_lossy().to_string()),
         say_available: say,
+        tts_voices: if say { available_tts_voices() } else { Vec::new() },
         ollama_available,
         ollama_models,
         data_dir: data_dir.to_string_lossy().to_string(),
     })
+}
+
+fn available_tts_voices() -> Vec<String> {
+    let output = Command::new("/usr/bin/say").args(["-v", "?"]).output();
+    let Ok(output) = output else { return Vec::new(); };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.split_whitespace().next().map(str::to_string))
+        .filter(|name| !name.is_empty())
+        .collect()
 }
 
 #[tauri::command]

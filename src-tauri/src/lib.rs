@@ -88,10 +88,10 @@ fn local_tts_ready(data_dir: &Path, provider: &str) -> bool {
 }
 
 fn patch_qwen_python_annotations(vpy: &Path, root: &Path) -> Result<(), String> {
-    // Qwen3-TTS releases currently use PEP 604 annotations (for example
-    // str | None). macOS may only provide Python 3.9, where those
-    // annotations parse but fail while the module is imported. Add the
-    // postponed-annotation future to the bundled Qwen modules in-place.
+    // qwen-tts 0.1.1 declares Python 3.9 support, but one model file uses
+    // Python 3.10 union syntax. Patch only those three hints. Older app builds
+    // added postponed annotations to every Qwen module; remove that migration
+    // first because Transformers must see real config classes, not strings.
     let script = r#"
 from pathlib import Path
 import sys
@@ -101,14 +101,33 @@ for site_packages in (root / "venv" / "lib").glob("python*/site-packages"):
     package = site_packages / "qwen_tts"
     if not package.is_dir():
         continue
+
     for path in package.rglob("*.py"):
         try:
             text = path.read_text(encoding="utf-8")
         except Exception:
             continue
-        if "from __future__ import annotations" in text:
-            continue
-        path.write_text("from __future__ import annotations\n" + text, encoding="utf-8")
+        migrated = text.removeprefix("from __future__ import annotations\n")
+        if migrated != text:
+            path.write_text(migrated, encoding="utf-8")
+
+    model = package / "core" / "models" / "modeling_qwen3_tts.py"
+    if not model.is_file():
+        continue
+    text = model.read_text(encoding="utf-8")
+    if "from typing import Callable, Optional, Union" not in text:
+        text = text.replace(
+            "from typing import Callable, Optional",
+            "from typing import Callable, Optional, Union",
+            1,
+        )
+    text = text.replace("cache_dir: str | None", "cache_dir: Optional[str]")
+    text = text.replace("revision: str | None = None", "revision: Optional[str] = None")
+    text = text.replace(
+        "ignore_patterns: str | list[str] | None = None",
+        "ignore_patterns: Optional[Union[str, list[str]]] = None",
+    )
+    model.write_text(text, encoding="utf-8")
 "#;
     let patched = Command::new(vpy)
         .args(["-c", script])

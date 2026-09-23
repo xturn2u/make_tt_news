@@ -1,10 +1,13 @@
 export type NodeStatus = 'idle' | 'running' | 'success' | 'warning' | 'error' | 'skipped';
 
+export type StepResult = { kind: 'text' | 'audio' | 'media' | 'file'; value: string; label?: string };
+
 export type SystemStatus = {
   platform: string;
   ffmpegAvailable: boolean;
   ffmpegPath: string | null;
   sayAvailable: boolean;
+  ttsVoices: string[];
   ollamaAvailable: boolean;
   ollamaModels: string[];
   dataDir: string;
@@ -47,6 +50,8 @@ export type StudioNodeData = Record<string, unknown> & {
   category: NodeCategory;
   status: NodeStatus;
   detail?: string;
+  result?: StepResult;
+  needsInput?: { message: string };
   config: NodeConfig;
   acceptsInput: boolean;
   providesOutput: boolean;

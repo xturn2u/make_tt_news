@@ -1,14 +1,25 @@
+import { useState } from 'react';
 import type { Node } from '@xyflow/react';
-import type { NodeConfig, StudioNodeData, SystemStatus } from '../types';
+import { mediaFileUrl } from '../desktop';
+import type { MediaResult, NodeConfig, StudioNodeData, SystemStatus } from '../types';
 
 type Props = {
   node: Node<StudioNodeData> | null;
   health: SystemStatus | null;
   onChangeConfig: (nodeId: string, config: NodeConfig) => void;
   onDelete: (nodeId: string) => void;
+  onStartFrom: (nodeId: string) => void;
+  onGenerateVersions: (nodeId: string, count: number) => void;
+  onOpenVideoEditor: (nodeId: string) => void;
+  memoryItems: MediaResult[];
+  onOpenResult: (nodeId: string) => void;
+  agentActivity: string[];
+  onAgentCommand: (nodeId: string, command: string) => void;
+  onManualAssetSearch: (nodeId: string, query: string) => void;
 };
 
-export default function InspectorPanel({ node, health, onChangeConfig, onDelete }: Props) {
+export default function InspectorPanel({ node, health, onChangeConfig, onDelete, onStartFrom, onGenerateVersions, onOpenVideoEditor, memoryItems, onOpenResult, agentActivity, onAgentCommand, onManualAssetSearch }: Props) {
+  const [command, setCommand] = useState('');
   if (!node) {
     return (
       <aside className="inspector">
@@ -46,12 +57,56 @@ export default function InspectorPanel({ node, health, onChangeConfig, onDelete 
         </div>
       </div>
 
+      <div className="inspector-actions"><button className="button primary" onClick={() => onStartFrom(node.id)}>▶ Ab hier starten</button><button className="button danger-inline" onClick={() => onDelete(node.id)}>Node entfernen</button>{node.data.moduleId === 'video-compose' && <button className="button ghost" onClick={() => onOpenVideoEditor(node.id)}>✎ Video Composer öffnen</button>}</div>
+
+      {node.data.needsInput && <div className="intervention-card">
+        <div className="intervention-title"><span>!</span><div><strong>Manuelle Eingabe erforderlich</strong><small>{node.data.needsInput.message}</small></div></div>
+        {node.data.moduleId === 'asset-search' && <form className="agent-console-form" onSubmit={(event) => { event.preventDefault(); const value = command.trim(); if (value) onManualAssetSearch(node.id, value); }}>
+          <input value={command} onChange={(event) => setCommand(event.target.value)} placeholder="Alternativer Suchbegriff …" aria-label="Alternativer Suchbegriff" />
+          <button className="button primary" type="submit" disabled={!command.trim()}>Erneut suchen</button>
+        </form>}
+        <p className="muted">Du kannst auch die Eingabe im Flow-Schritt ändern und danach erneut starten.</p>
+      </div>}
+
+      <div className="inspector-result-actions"><button className="button ghost" disabled={!node.data.result} onClick={() => onOpenResult(node.id)}>▣ {node.data.result ? 'Ergebnis anzeigen' : 'Noch kein Ergebnis'}</button>{node.data.moduleId === 'tts' && node.data.result?.kind === 'audio' && <audio className="audio-preview" controls src={mediaFileUrl(node.data.result.value)} />}</div>
+
       <div className="inspector-fields">
         {Object.entries(config).length === 0 && <p className="muted">Für dieses Modul sind aktuell keine Parameter notwendig.</p>}
         {Object.entries(config).map(([key, value]) => (
-          <ConfigField key={key} name={key} value={value} onChange={(next) => update(key, next)} />
+          <ConfigField key={key} name={key} value={value} options={key === 'voice' ? (health?.ttsVoices ?? []) : undefined} onChange={(next) => update(key, next)} />
         ))}
       </div>
+
+      {(node.data.moduleId === 'asset-search' || node.data.moduleId === 'memory-card') && (
+        <div className="inspector-memory">
+          <p className="eyebrow">{node.data.moduleId === 'asset-search' ? 'ASSET SEARCH · TREFFER' : 'MEMORY CARD · GESPEICHERT'}</p>
+          {memoryItems.length ? (
+            <div className="inspector-gallery">
+              {memoryItems.map((item) => (
+                <figure key={item.originalUrl}>
+                  <img src={item.thumbUrl} alt={item.title} />
+                  <figcaption title={item.title}>{item.title}</figcaption>
+                </figure>
+              ))}
+            </div>
+          ) : <p className="muted">Noch keine Assets übergeben.</p>}
+        </div>
+      )}
+
+      {node.data.moduleId === 'script-agent' && <div className="version-generator"><p className="eyebrow">VIDEO-VARIANTEN</p><p>Erzeugt ab diesem Script Agent vollständige zusätzliche Flow-Bahnen.</p><button className="button primary" onClick={() => onGenerateVersions(node.id, Number(config.versions ?? 3))}>Varianten einfügen</button></div>}
+
+      {node.data.moduleId === 'tts' && !(health?.ttsVoices?.length) && <p className="muted tts-help">Keine Stimmenliste verfügbar. macOS verwendet die Standardsprache.</p>}
+
+      {node.data.moduleId.includes('agent') && (
+        <div className="agent-console">
+          <div className="agent-console-head"><p className="eyebrow">AGENT CONSOLE</p><span>Ausführungsstatus und Prompt-Antworten</span></div>
+          <pre className="agent-console-output">{(agentActivity.length ? agentActivity : ['Bereit für diesen Agenten.']).join('\\n')}</pre>
+          <form className="agent-console-form" onSubmit={(event) => { event.preventDefault(); const value = command.trim(); if (!value) return; onAgentCommand(node.id, value); setCommand(''); }}>
+            <input value={command} onChange={(event) => setCommand(event.target.value)} placeholder="Rückfrage oder Zusatzkommando …" aria-label="Agentenkommando" />
+            <button className="button ghost" type="submit" disabled={!command.trim()}>Senden</button>
+          </form>
+        </div>
+      )}
 
       {node.data.moduleId.includes('agent') && (
         <div className="runtime-card">
@@ -61,12 +116,14 @@ export default function InspectorPanel({ node, health, onChangeConfig, onDelete 
         </div>
       )}
 
-      <button className="danger-button" onClick={() => onDelete(node.id)}>Node entfernen</button>
-    </aside>
+          </aside>
   );
 }
 
-function ConfigField({ name, value, onChange }: { name: string; value: string | number | boolean; onChange: (value: string | number | boolean) => void }) {
+function ConfigField({ name, value, options, onChange }: { name: string; value: string | number | boolean; options?: string[]; onChange: (value: string | number | boolean) => void }) {
+  if (name === 'voice' && typeof value === 'string') {
+    return <label className="field"><span>Stimme</span><select value={value} onChange={(event) => onChange(event.target.value)}><option value="">Systemstandard</option>{options?.map((voice) => <option key={voice} value={voice}>{voice}</option>)}</select></label>;
+  }
   const label = pretty(name);
 
   if (typeof value === 'boolean') {
@@ -112,7 +169,12 @@ function pretty(value: string) {
     height: 'Höhe',
     strict: 'Strenge Prüfung',
     condition: 'Bedingung',
-    filename: 'Dateiname'
+    filename: 'Dateiname',
+    versions: 'Anzahl Versionen',
+    name: 'Agent-Name',
+    source: 'Materialquelle',
+    timing: 'Timingquelle',
+    wordsPerLine: 'Wörter pro Zeile'
   };
   return labels[value] ?? value;
 }

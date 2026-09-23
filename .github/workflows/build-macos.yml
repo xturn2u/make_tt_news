@@ -2,7 +2,7 @@ name: Build macOS MVP
 
 on:
   push:
-    branches: [main, feature/contentflow-studio-v1, feature/in-app-runtime-manager]
+    branches: [main, feature/contentflow-studio-v1, feature/in-app-runtime-manager, feature/ux-captions-cancel-debug]
   workflow_dispatch:
 
 concurrency:

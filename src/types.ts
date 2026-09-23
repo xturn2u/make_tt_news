@@ -11,6 +11,8 @@ export type SystemStatus = {
   ollamaAvailable: boolean;
   ollamaModels: string[];
   dataDir: string;
+  localTtsProvider: string;
+  localTtsReady: boolean;
 };
 
 export type NewsArticle = {

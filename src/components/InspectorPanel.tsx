@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { Node } from '@xyflow/react';
 import { mediaFileUrl } from '../desktop';
 import type { MediaResult, NodeConfig, StudioNodeData, SystemStatus } from '../types';
@@ -12,9 +13,12 @@ type Props = {
   onOpenVideoEditor: (nodeId: string) => void;
   memoryItems: MediaResult[];
   onOpenResult: (nodeId: string) => void;
+  agentActivity: string[];
+  onAgentCommand: (nodeId: string, command: string) => void;
 };
 
-export default function InspectorPanel({ node, health, onChangeConfig, onDelete, onStartFrom, onGenerateVersions, onOpenVideoEditor, memoryItems, onOpenResult }: Props) {
+export default function InspectorPanel({ node, health, onChangeConfig, onDelete, onStartFrom, onGenerateVersions, onOpenVideoEditor, memoryItems, onOpenResult, agentActivity, onAgentCommand }: Props) {
+  const [command, setCommand] = useState('');
   if (!node) {
     return (
       <aside className="inspector">
@@ -80,6 +84,17 @@ export default function InspectorPanel({ node, health, onChangeConfig, onDelete,
       )}
 
       {node.data.moduleId === 'script-agent' && <div className="version-generator"><p className="eyebrow">VIDEO-VARIANTEN</p><p>Erzeugt ab diesem Script Agent vollständige zusätzliche Flow-Bahnen.</p><button className="button primary" onClick={() => onGenerateVersions(node.id, Number(config.versions ?? 3))}>Varianten einfügen</button></div>}
+
+      {node.data.moduleId.includes('agent') && (
+        <div className="agent-console">
+          <div className="agent-console-head"><p className="eyebrow">AGENT CONSOLE</p><span>Ausführungsstatus und Prompt-Antworten</span></div>
+          <pre className="agent-console-output">{(agentActivity.length ? agentActivity : ['Bereit für diesen Agenten.']).join('\\n')}</pre>
+          <form className="agent-console-form" onSubmit={(event) => { event.preventDefault(); const value = command.trim(); if (!value) return; onAgentCommand(node.id, value); setCommand(''); }}>
+            <input value={command} onChange={(event) => setCommand(event.target.value)} placeholder="Rückfrage oder Zusatzkommando …" aria-label="Agentenkommando" />
+            <button className="button ghost" type="submit" disabled={!command.trim()}>Senden</button>
+          </form>
+        </div>
+      )}
 
       {node.data.moduleId.includes('agent') && (
         <div className="runtime-card">

@@ -78,7 +78,10 @@ function Studio() {
   const [outputPath, setOutputPath] = useState('');
   const [logs, setLogs] = useState<string[]>(['ContentFlow Studio bereit.']);
   const [agentActivity, setAgentActivity] = useState<Record<string, string[]>>({});
+  const [activeProcessNodeId, setActiveProcessNodeId] = useState<string | null>(null);
+  const [pausedNodeId, setPausedNodeId] = useState<string | null>(null);
   const cancelRejectRef = useRef<(() => void) | null>(null);
+  const runContextRef = useRef<RunContext | null>(null);
   const { screenToFlowPosition } = useReactFlow();
 
   const selectedNode = useMemo(
@@ -218,7 +221,7 @@ function Studio() {
     addModule(moduleId, position);
   }, [addModule, screenToFlowPosition]);
 
-  const runFlow = useCallback(async (startNodeId?: string) => {
+  const runFlow = useCallback(async (startNodeId?: string, overrides: Record<string, string> = {}) => {
     if (running) return;
 
     const warnings = validateNewsFlow(nodes, edges);
@@ -244,17 +247,20 @@ function Studio() {
     setNodes((current) => current.map((node) => ({ ...node, data: { ...node.data, status: 'idle' as NodeStatus, detail: undefined } })));
     addLog(`${startNodeId ? 'Flow ab' : 'Flow'} gestartet: ${executionOrder.length} Module.`);
 
-    const ctx: RunContext = {};
+    const ctx: RunContext = startNodeId && runContextRef.current ? runContextRef.current : {};
 
     try {
       for (const nodeId of executionOrder) {
         if (cancelRequested.current) throw new Error('Workflow vom Benutzer abgebrochen.');
         const node = nodes.find((item) => item.id === nodeId);
         if (!node) continue;
+        setActiveProcessNodeId(node.id);
 
         if (debugStops && breakpoints[node.id]) {
           setNodeStatus(node.id, 'warning', 'Debug-Haltepunkt');
-          addLog(`Debug-Haltepunkt vor ${node.data.title}.`);
+          setPausedNodeId(node.id);
+          runContextRef.current = ctx;
+          addLog(`Debug-Haltepunkt vor ${node.data.title}. Flow pausiert. Haltepunkt deaktivieren, um fortzufahren.`);
           return;
         }
         setNodeStatus(node.id, 'running', 'Wird ausgeführt …');
@@ -343,12 +349,19 @@ function Studio() {
 
         if (moduleId === 'asset-search') {
           if (!ctx.article) throw new Error('Asset Search benötigt Artikeldaten.');
-          const query = String(config.query ?? '').trim() || ctx.assetQuery || deriveQuery(ctx.article);
+          const query = overrides[node.id] ?? (String(config.query ?? '').trim() || ctx.assetQuery || deriveQuery(ctx.article));
           const results = await cancellable(searchWikimedia(query, Number(config.limit ?? 8)));
-          if (!results.length) throw new Error(`Keine Medien für „${query}“ gefunden.`);
+          if (!results.length) {
+            const message = `Keine Medien für „${query}“ gefunden.`;
+            setNodes((current) => current.map((item) => item.id === node.id ? { ...item, data: { ...item.data, status: 'warning' as NodeStatus, detail: message, needsInput: { message } } } : item));
+            runContextRef.current = ctx;
+            addLog(`${message} Manuelle Suche möglich.`);
+            return;
+          }
           ctx.assets = results;
           ctx.asset = results[0];
           setMemoryItems(results);
+          setNodes((current) => current.map((item) => item.id === node.id ? { ...item, data: { ...item.data, needsInput: undefined } } : item));
           setNodeStatus(node.id, 'success', `${results.length} Treffer · ${ctx.asset.license}`);
           addLog(`Asset Search: ${results.length} Treffer für „${query}“.`);
           setNodeResult(node.id, { kind: 'media', value: JSON.stringify(results), label: `${results.length} Assets` });
@@ -427,17 +440,29 @@ function Studio() {
         setNodeStatus(node.id, 'skipped', 'Noch keine Runtime');
       }
 
+      runContextRef.current = null;
+      setActiveProcessNodeId(null);
+      setPausedNodeId(null);
       addLog('Flow erfolgreich abgeschlossen.');
     } catch (error) {
       const message = errorText(error);
       const activeId = executionOrder.find((id) => nodes.find((node) => node.id === id)?.data.status === 'running');
       if (activeId) setNodeStatus(activeId, 'error', message);
+      runContextRef.current = null;
+      setActiveProcessNodeId(null);
       addLog(`Flow gestoppt: ${message}`);
     } finally {
       cancelRejectRef.current = null;
       setRunning(false);
     }
   }, [addLog, breakpoints, debugStops, edges, health, memoryItems.length, model, nodes, projectTitle, pushAgentActivity, running, setNodeResult, setNodeStatus, setNodes]);
+
+  useEffect(() => {
+    if (!pausedNodeId || running || (debugStops && breakpoints[pausedNodeId])) return;
+    const resumeId = pausedNodeId;
+    setPausedNodeId(null);
+    void runFlow(resumeId);
+  }, [breakpoints, debugStops, pausedNodeId, runFlow, running]);
 
   const generateVersions = useCallback((nodeId: string, count: number) => {
     const total = Math.max(1, Math.min(5, Math.round(count)));
@@ -460,6 +485,15 @@ function Studio() {
   }, [addLog, edges, nodes, setEdges, setNodes]);
 
   const startFrom = useCallback((nodeId: string) => { void runFlow(nodeId); }, [runFlow]);
+  const openIntervention = useCallback((nodeId: string) => { setSelectedNodeId(nodeId); }, []);
+  const manualAssetSearch = useCallback((nodeId: string, query: string) => {
+    const node = nodes.find((item) => item.id === nodeId);
+    if (!node) return;
+    updateNodeConfig(nodeId, { ...node.data.config, query });
+    setNodes((current) => current.map((item) => item.id === nodeId ? { ...item, data: { ...item.data, needsInput: undefined } } : item));
+    setSelectedNodeId(nodeId);
+    void runFlow(nodeId, { [nodeId]: query });
+  }, [nodes, runFlow, setNodes, updateNodeConfig]);
   const loadProject = useCallback((id: string) => {
     const project = projects.find((item) => item.id === id);
     if (!project) return;
@@ -479,7 +513,7 @@ function Studio() {
     setNodes([]); setEdges([]); setSelectedNodeId(null); setProjectTitle('Leerer Flow'); setMemoryItems([]); addLog('Leerer Flow erstellt.');
   }, [addLog, setEdges, setNodes]);
   const openResult = useCallback((nodeId: string) => setResultNodeId(nodeId), []);
-  const nodeTypes = useMemo(() => ({ studio: (props: any) => <StudioNode {...props} onStartFrom={startFrom} debugStops={debugStops} breakpoint={!!breakpoints[props.id]} onToggleBreakpoint={toggleBreakpoint} /> }), [breakpoints, debugStops, startFrom, toggleBreakpoint]);
+  const nodeTypes = useMemo(() => ({ studio: (props: any) => <StudioNode {...props} onStartFrom={startFrom} debugStops={debugStops} breakpoint={!!breakpoints[props.id]} onToggleBreakpoint={toggleBreakpoint} onOpenIntervention={openIntervention} /> }), [breakpoints, debugStops, openIntervention, startFrom, toggleBreakpoint]);
 
   const cancelFlow = useCallback(() => {
     if (!running) return;
@@ -618,7 +652,9 @@ function Studio() {
         onOpenResult={openResult}
         agentActivity={agentActivity[selectedNode?.id ?? ''] ?? []}
         onAgentCommand={runAgentCommand}
+        onManualAssetSearch={manualAssetSearch}
       />
+      {activeProcessNodeId && <ProcessPopover node={nodes.find((item) => item.id === activeProcessNodeId) ?? null} activity={agentActivity[activeProcessNodeId] ?? []} paused={pausedNodeId === activeProcessNodeId} />}
       {resultNodeId && <ResultOverlay node={nodes.find((item) => item.id === resultNodeId) ?? null} onClose={() => setResultNodeId(null)} onSave={(value) => { const node = nodes.find((item) => item.id === resultNodeId); if (node?.data.result) setNodeResult(resultNodeId, { ...node.data.result, value }); }} />}
       {videoEditorOpen && <VideoEditorOverlay onClose={() => setVideoEditorOpen(false)} />}
       {settingsOpen && <SettingsPanel health={health} logs={logs} debugMode={debugMode} onDebugChange={toggleDebug} debugStops={debugStops} onDebugStopsChange={toggleDebugStops} onRefresh={refreshHealth} onClose={() => setSettingsOpen(false)} />}
@@ -716,6 +752,12 @@ function readStoredProjects(): StoredProject[] {
     const parsed = JSON.parse(localStorage.getItem('contentflow.projects') || '[]');
     return Array.isArray(parsed) ? parsed : [];
   } catch { return []; }
+}
+
+function ProcessPopover({ node, activity, paused }: { node: Node<StudioNodeData> | null; activity: string[]; paused: boolean }) {
+  if (!node) return null;
+  const lines = activity.length ? activity : [node.data.detail || 'Schritt wird ausgeführt …'];
+  return <aside className="process-popover" aria-live="polite"><div className="process-popover-head"><div><p className="eyebrow">AKTUELLER PROZESS</p><strong>{node.data.title}</strong></div><span className={paused ? 'paused' : 'live'}>{paused ? 'PAUSIERT' : '● LIVE'}</span></div><pre>{lines.slice(-8).join('\\n')}</pre></aside>;
 }
 
 function ResultOverlay({ node, onClose, onSave }: { node: Node<StudioNodeData> | null; onClose: () => void; onSave: (value: string) => void }) {

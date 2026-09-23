@@ -15,9 +15,10 @@ type Props = {
   onOpenResult: (nodeId: string) => void;
   agentActivity: string[];
   onAgentCommand: (nodeId: string, command: string) => void;
+  onManualAssetSearch: (nodeId: string, query: string) => void;
 };
 
-export default function InspectorPanel({ node, health, onChangeConfig, onDelete, onStartFrom, onGenerateVersions, onOpenVideoEditor, memoryItems, onOpenResult, agentActivity, onAgentCommand }: Props) {
+export default function InspectorPanel({ node, health, onChangeConfig, onDelete, onStartFrom, onGenerateVersions, onOpenVideoEditor, memoryItems, onOpenResult, agentActivity, onAgentCommand, onManualAssetSearch }: Props) {
   const [command, setCommand] = useState('');
   if (!node) {
     return (
@@ -57,6 +58,15 @@ export default function InspectorPanel({ node, health, onChangeConfig, onDelete,
       </div>
 
       <div className="inspector-actions"><button className="button primary" onClick={() => onStartFrom(node.id)}>▶ Ab hier starten</button>{node.data.moduleId === 'video-compose' && <button className="button ghost" onClick={() => onOpenVideoEditor(node.id)}>✎ Video Composer öffnen</button>}</div>
+
+      {node.data.needsInput && <div className="intervention-card">
+        <div className="intervention-title"><span>!</span><div><strong>Manuelle Eingabe erforderlich</strong><small>{node.data.needsInput.message}</small></div></div>
+        {node.data.moduleId === 'asset-search' && <form className="agent-console-form" onSubmit={(event) => { event.preventDefault(); const value = command.trim(); if (value) onManualAssetSearch(node.id, value); }}>
+          <input value={command} onChange={(event) => setCommand(event.target.value)} placeholder="Alternativer Suchbegriff …" aria-label="Alternativer Suchbegriff" />
+          <button className="button primary" type="submit" disabled={!command.trim()}>Erneut suchen</button>
+        </form>}
+        <p className="muted">Du kannst auch die Eingabe im Flow-Schritt ändern und danach erneut starten.</p>
+      </div>}
 
       <div className="inspector-result-actions"><button className="button ghost" disabled={!node.data.result} onClick={() => onOpenResult(node.id)}>▣ {node.data.result ? 'Ergebnis anzeigen' : 'Noch kein Ergebnis'}</button>{node.data.moduleId === 'tts' && node.data.result?.kind === 'audio' && <audio className="audio-preview" controls src={mediaFileUrl(node.data.result.value)} />}</div>
 

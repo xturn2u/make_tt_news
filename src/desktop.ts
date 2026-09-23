@@ -1,5 +1,6 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import type { MediaResult, NewsArticle, ReplicateResult, SystemStatus } from './types';
+import type { LocalTtsProvider, LocalTtsStatus } from './localTts';
 
 const inTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -14,6 +15,7 @@ export async function systemStatus(): Promise<SystemStatus> {
       ollamaAvailable: false,
       ollamaModels: [],
       dataDir: 'Desktop-Funktionen sind nur in der Tauri-App verfügbar.'
+      ,localTtsProvider: 'qwen3-tts', localTtsReady: false
     };
   }
   return invoke<SystemStatus>('system_status');
@@ -81,6 +83,18 @@ export function mediaFileUrl(path: string): string {
 
 export async function createTts(text: string, voice = ''): Promise<string> {
   return invoke<string>('create_tts', { text, voice });
+}
+
+export async function localTtsStatus(provider: LocalTtsProvider): Promise<LocalTtsStatus> {
+  return invoke<LocalTtsStatus>('local_tts_status', { provider });
+}
+
+export async function installLocalTts(provider: LocalTtsProvider): Promise<string> {
+  return invoke<string>('install_local_tts', { provider });
+}
+
+export async function createLocalTts(text: string, provider: LocalTtsProvider, voice = '', speed = 1): Promise<string> {
+  return invoke<string>('create_local_tts', { text, provider, voice, speed });
 }
 
 export async function renderVerticalVideo(imageUrl: string, audioPath: string): Promise<string> {

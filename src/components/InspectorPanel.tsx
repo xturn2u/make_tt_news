@@ -1,0 +1,192 @@
+import { useState } from 'react';
+import type { Node } from '@xyflow/react';
+import { mediaFileUrl } from '../desktop';
+import type { MediaResult, NodeConfig, StudioNodeData, SystemStatus } from '../types';
+
+type Props = {
+  node: Node<StudioNodeData> | null;
+  health: SystemStatus | null;
+  onChangeConfig: (nodeId: string, config: NodeConfig) => void;
+  onDelete: (nodeId: string) => void;
+  onStartFrom: (nodeId: string) => void;
+  onGenerateVersions: (nodeId: string, count: number) => void;
+  onOpenVideoEditor: (nodeId: string) => void;
+  memoryItems: MediaResult[];
+  onOpenResult: (nodeId: string) => void;
+  agentActivity: string[];
+  onAgentCommand: (nodeId: string, command: string) => void;
+  onManualAssetSearch: (nodeId: string, query: string) => void;
+};
+
+export default function InspectorPanel({ node, health, onChangeConfig, onDelete, onStartFrom, onGenerateVersions, onOpenVideoEditor, memoryItems, onOpenResult, agentActivity, onAgentCommand, onManualAssetSearch }: Props) {
+  const [command, setCommand] = useState('');
+  if (!node) {
+    return (
+      <aside className="inspector">
+        <div className="empty-inspector">
+          <div className="empty-icon">◎</div>
+          <h3>Node auswählen</h3>
+          <p>Klicke auf eine Flow-Karte, um ihre Einstellungen zu bearbeiten.</p>
+        </div>
+      </aside>
+    );
+  }
+
+  const config = node.data.config;
+
+  const update = (key: string, value: string | number | boolean) => {
+    onChangeConfig(node.id, { ...config, [key]: value });
+  };
+
+  return (
+    <aside className="inspector">
+      <div className="inspector-head">
+        <div className="inspector-icon">{node.data.icon}</div>
+        <div>
+          <p className="eyebrow">{node.data.category}</p>
+          <h2>{node.data.title}</h2>
+          <span>{node.data.subtitle}</span>
+        </div>
+      </div>
+
+      <div className="status-card">
+        <span className={`status-light status-${node.data.status}`} />
+        <div>
+          <strong>{statusLabel(node.data.status)}</strong>
+          <small>{node.data.detail || 'Noch nicht ausgeführt'}</small>
+        </div>
+      </div>
+
+      <div className="inspector-actions"><button className="button primary" onClick={() => onStartFrom(node.id)}>▶ Ab hier starten</button><button className="button danger-inline" onClick={() => onDelete(node.id)}>Node entfernen</button>{node.data.moduleId === 'video-compose' && <button className="button ghost" onClick={() => onOpenVideoEditor(node.id)}>✎ Video Composer öffnen</button>}</div>
+
+      {node.data.needsInput && <div className="intervention-card">
+        <div className="intervention-title"><span>!</span><div><strong>Manuelle Eingabe erforderlich</strong><small>{node.data.needsInput.message}</small></div></div>
+        {node.data.moduleId === 'asset-search' && <form className="agent-console-form" onSubmit={(event) => { event.preventDefault(); const value = command.trim(); if (value) onManualAssetSearch(node.id, value); }}>
+          <input value={command} onChange={(event) => setCommand(event.target.value)} placeholder="Alternativer Suchbegriff …" aria-label="Alternativer Suchbegriff" />
+          <button className="button primary" type="submit" disabled={!command.trim()}>Erneut suchen</button>
+        </form>}
+        <p className="muted">Du kannst auch die Eingabe im Flow-Schritt ändern und danach erneut starten.</p>
+      </div>}
+
+      <div className="inspector-result-actions"><button className="button ghost" disabled={!node.data.result} onClick={() => onOpenResult(node.id)}>▣ {node.data.result ? 'Ergebnis anzeigen' : 'Noch kein Ergebnis'}</button>{node.data.moduleId === 'tts' && node.data.result?.kind === 'audio' && <audio className="audio-preview" controls src={mediaFileUrl(node.data.result.value)} />}</div>
+
+      <div className="inspector-fields">
+        {Object.entries(config).length === 0 && <p className="muted">Für dieses Modul sind aktuell keine Parameter notwendig.</p>}
+        {Object.entries(config).map(([key, value]) => (
+          <ConfigField key={key} name={key} value={value} options={key === 'voice' ? (health?.ttsVoices ?? []) : undefined} onChange={(next) => update(key, next)} />
+        ))}
+      </div>
+
+      {(node.data.moduleId === 'asset-search' || node.data.moduleId === 'memory-card') && (
+        <div className="inspector-memory">
+          <p className="eyebrow">{node.data.moduleId === 'asset-search' ? 'ASSET SEARCH · TREFFER' : 'MEMORY CARD · GESPEICHERT'}</p>
+          {memoryItems.length ? (
+            <div className="inspector-gallery">
+              {memoryItems.map((item) => (
+                <figure key={item.originalUrl}>
+                  <img src={item.thumbUrl} alt={item.title} />
+                  <figcaption title={item.title}>{item.title}</figcaption>
+                </figure>
+              ))}
+            </div>
+          ) : <p className="muted">Noch keine Assets übergeben.</p>}
+        </div>
+      )}
+
+      {node.data.moduleId === 'script-agent' && <div className="version-generator"><p className="eyebrow">VIDEO-VARIANTEN</p><p>Erzeugt ab diesem Script Agent vollständige zusätzliche Flow-Bahnen.</p><button className="button primary" onClick={() => onGenerateVersions(node.id, Number(config.versions ?? 3))}>Varianten einfügen</button></div>}
+
+      {node.data.moduleId === 'tts' && !(health?.ttsVoices?.length) && <p className="muted tts-help">Keine Stimmenliste verfügbar. macOS verwendet die Standardsprache.</p>}
+
+      {node.data.moduleId.includes('agent') && (
+        <div className="agent-console">
+          <div className="agent-console-head"><p className="eyebrow">AGENT CONSOLE</p><span>Ausführungsstatus und Prompt-Antworten</span></div>
+          <pre className="agent-console-output">{(agentActivity.length ? agentActivity : ['Bereit für diesen Agenten.']).join('\\n')}</pre>
+          <form className="agent-console-form" onSubmit={(event) => { event.preventDefault(); const value = command.trim(); if (!value) return; onAgentCommand(node.id, value); setCommand(''); }}>
+            <input value={command} onChange={(event) => setCommand(event.target.value)} placeholder="Rückfrage oder Zusatzkommando …" aria-label="Agentenkommando" />
+            <button className="button ghost" type="submit" disabled={!command.trim()}>Senden</button>
+          </form>
+        </div>
+      )}
+
+      {node.data.moduleId.includes('agent') && (
+        <div className="runtime-card">
+          <p className="eyebrow">LOCAL AI</p>
+          <strong>{health?.ollamaAvailable ? 'Ollama verbunden' : 'Ollama nicht aktiv'}</strong>
+          <small>{health?.ollamaModels.length ? health.ollamaModels.join(', ') : 'Beim Start wird ein lokales Modell gewählt.'}</small>
+        </div>
+      )}
+
+          </aside>
+  );
+}
+
+function ConfigField({ name, value, options, onChange }: { name: string; value: string | number | boolean; options?: string[]; onChange: (value: string | number | boolean) => void }) {
+  if (name === 'voice' && typeof value === 'string') {
+    return <label className="field"><span>Stimme</span><select value={value} onChange={(event) => onChange(event.target.value)}><option value="">Systemstandard</option>{options?.map((voice) => <option key={voice} value={voice}>{voice}</option>)}</select></label>;
+  }
+  const label = pretty(name);
+
+  if (typeof value === 'boolean') {
+    return (
+      <label className="toggle-field">
+        <span>{label}</span>
+        <input type="checkbox" checked={value} onChange={(e) => onChange(e.target.checked)} />
+      </label>
+    );
+  }
+
+  if (typeof value === 'number') {
+    return (
+      <label className="field">
+        <span>{label}</span>
+        <input type="number" value={value} onChange={(e) => onChange(Number(e.target.value))} />
+      </label>
+    );
+  }
+
+  const long = name === 'prompt' || name === 'condition';
+  return (
+    <label className="field">
+      <span>{label}</span>
+      {long
+        ? <textarea rows={5} value={String(value)} onChange={(e) => onChange(e.target.value)} />
+        : <input type={name === 'url' ? 'url' : 'text'} value={String(value)} onChange={(e) => onChange(e.target.value)} />}
+    </label>
+  );
+}
+
+function pretty(value: string) {
+  const labels: Record<string, string> = {
+    url: 'News URL',
+    prompt: 'Agent Prompt',
+    duration: 'Ziellänge (Sek.)',
+    style: 'Stil',
+    scenes: 'Szenen',
+    query: 'Suchbegriff',
+    limit: 'Max. Assets',
+    voice: 'Stimme',
+    width: 'Breite',
+    height: 'Höhe',
+    strict: 'Strenge Prüfung',
+    condition: 'Bedingung',
+    filename: 'Dateiname',
+    versions: 'Anzahl Versionen',
+    name: 'Agent-Name',
+    source: 'Materialquelle',
+    timing: 'Timingquelle',
+    wordsPerLine: 'Wörter pro Zeile'
+  };
+  return labels[value] ?? value;
+}
+
+function statusLabel(status: StudioNodeData['status']) {
+  const labels: Record<StudioNodeData['status'], string> = {
+    idle: 'Bereit',
+    running: 'Wird ausgeführt',
+    success: 'Erfolgreich',
+    warning: 'Hinweis',
+    error: 'Fehler',
+    skipped: 'Übersprungen'
+  };
+  return labels[status];
+}

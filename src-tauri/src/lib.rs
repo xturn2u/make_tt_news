@@ -8,7 +8,8 @@ use std::{
     process::Command,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tauri::Manager;
+use futures_util::StreamExt;
+use tauri::{Emitter, Manager};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -17,9 +18,22 @@ struct SystemStatus {
     ffmpeg_available: bool,
     ffmpeg_path: Option<String>,
     say_available: bool,
+    tts_voices: Vec<String>,
     ollama_available: bool,
     ollama_models: Vec<String>,
     data_dir: String,
+    local_tts_provider: String,
+    local_tts_ready: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalTtsStatus {
+    provider: String,
+    installed: bool,
+    ready: bool,
+    model_path: Option<String>,
+    message: String,
 }
 
 #[derive(Serialize)]
@@ -33,11 +47,22 @@ struct MediaResult {
     artist: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NewsArticle {
+    url: String,
+    title: String,
+    text: String,
+    site_name: String,
+    word_count: usize,
+}
+
 #[tauri::command]
 async fn system_status(app: tauri::AppHandle) -> Result<SystemStatus, String> {
-    let ffmpeg = resolve_binary("ffmpeg");
-    let say = Path::new("/usr/bin/say").exists();
     let data_dir = ensure_data_dir(&app)?;
+    let local_ffmpeg = data_dir.join("runtime").join("bin").join("ffmpeg");
+    let ffmpeg = resolve_binary("ffmpeg").or_else(|| local_ffmpeg.is_file().then_some(local_ffmpeg));
+    let say = Path::new("/usr/bin/say").exists();
     let (ollama_available, ollama_models) = ollama_models().await;
 
     Ok(SystemStatus {
@@ -45,9 +70,236 @@ async fn system_status(app: tauri::AppHandle) -> Result<SystemStatus, String> {
         ffmpeg_available: ffmpeg.is_some(),
         ffmpeg_path: ffmpeg.map(|p| p.to_string_lossy().to_string()),
         say_available: say,
+        tts_voices: if say { available_tts_voices() } else { Vec::new() },
         ollama_available,
         ollama_models,
         data_dir: data_dir.to_string_lossy().to_string(),
+        local_tts_provider: "qwen3-tts".into(),
+        local_tts_ready: local_tts_ready(&data_dir, "qwen3-tts"),
+    })
+}
+
+fn local_tts_root(data_dir: &Path, provider: &str) -> PathBuf {
+    data_dir.join("runtime").join("tts").join(provider)
+}
+
+fn local_tts_ready(data_dir: &Path, provider: &str) -> bool {
+    local_tts_root(data_dir, provider).join(".installed").is_file()
+}
+
+fn patch_qwen_python_annotations(vpy: &Path, root: &Path) -> Result<(), String> {
+    // qwen-tts 0.1.1 declares Python 3.9 support, but one model file uses
+    // Python 3.10 union syntax. Patch only those three hints. Older app builds
+    // added postponed annotations to every Qwen module; remove that migration
+    // first because Transformers must see real config classes, not strings.
+    let script = r#"
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+for site_packages in (root / "venv" / "lib").glob("python*/site-packages"):
+    package = site_packages / "qwen_tts"
+    if not package.is_dir():
+        continue
+
+    for path in package.rglob("*.py"):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        migrated = text.removeprefix("from __future__ import annotations\n")
+        if migrated != text:
+            path.write_text(migrated, encoding="utf-8")
+
+    model = package / "core" / "models" / "modeling_qwen3_tts.py"
+    if not model.is_file():
+        continue
+    text = model.read_text(encoding="utf-8")
+    if "from typing import Callable, Optional, Union" not in text:
+        text = text.replace(
+            "from typing import Callable, Optional",
+            "from typing import Callable, Optional, Union",
+            1,
+        )
+    text = text.replace("cache_dir: str | None", "cache_dir: Optional[str]")
+    text = text.replace("revision: str | None = None", "revision: Optional[str] = None")
+    text = text.replace(
+        "ignore_patterns: str | list[str] | None = None",
+        "ignore_patterns: Optional[Union[str, list[str]]] = None",
+    )
+    model.write_text(text, encoding="utf-8")
+"#;
+    let patched = Command::new(vpy)
+        .args(["-c", script])
+        .arg(root)
+        .output()
+        .map_err(|e| format!("Qwen-Python-Kompatibilität konnte nicht hergestellt werden: {e}"))?;
+    if !patched.status.success() {
+        return Err(format!(
+            "Qwen-Python-Kompatibilität konnte nicht hergestellt werden: {}",
+            String::from_utf8_lossy(&patched.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn local_tts_status(app: tauri::AppHandle, provider: String) -> Result<LocalTtsStatus, String> {
+    let data_dir = ensure_data_dir(&app)?;
+    let root = local_tts_root(&data_dir, &provider);
+    let installed = root.join(".installed").is_file();
+    let ready = installed && root.join("runner.py").is_file();
+    Ok(LocalTtsStatus {
+        provider: provider.clone(), installed, ready,
+        model_path: installed.then(|| root.to_string_lossy().to_string()),
+        message: if ready { "Lokale TTS-Runtime bereit".into() } else { "Lokale TTS-Runtime noch nicht eingerichtet".into() },
+    })
+}
+
+#[tauri::command]
+async fn install_local_tts(app: tauri::AppHandle, provider: String) -> Result<String, String> {
+    let data_dir = ensure_data_dir(&app)?;
+    let root = local_tts_root(&data_dir, &provider);
+    fs::create_dir_all(&root).map_err(|e| format!("TTS-Verzeichnis konnte nicht angelegt werden: {e}"))?;
+    let python = ["python3.12", "python3", "python"].iter().find(|candidate| resolve_binary(candidate).is_some()).copied().ok_or("Python 3 ist auf diesem Mac nicht verfügbar.")?;
+    let venv = root.join("venv");
+    if !venv.join("bin").join("python").is_file() {
+        let status = Command::new(python).args(["-m", "venv"]).arg(&venv).status().map_err(|e| format!("Python-Runtime konnte nicht gestartet werden: {e}"))?;
+        if !status.success() { return Err("Python konnte keine lokale TTS-Umgebung anlegen.".into()); }
+    }
+    let vpy = venv.join("bin").join("python");
+    let package = match provider.as_str() { "qwen3-tts" => "qwen-tts", "chatterbox" => "chatterbox-tts", _ => return Err("Unbekannter lokaler TTS-Provider.".into()) };
+    let upgrade = Command::new(&vpy).args(["-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"]).output().map_err(|e| format!("Python-Paketmanager konnte nicht gestartet werden: {e}"))?;
+    if !upgrade.status.success() { return Err(format!("Python-Paketmanager konnte nicht aktualisiert werden: {}", String::from_utf8_lossy(&upgrade.stderr).trim())); }
+    let install = Command::new(&vpy).args(["-m", "pip", "install", "--upgrade", "--prefer-binary", package, "sox"]).output().map_err(|e| format!("Lokale TTS-Abhängigkeiten konnten nicht installiert werden: {e}"))?;
+    if !install.status.success() {
+        // qwen-tts currently pins a large dependency set. On macOS/Python
+        // versions with a resolver conflict, install its runtime in two
+        // explicit phases so pip does not reject otherwise usable wheels.
+        if provider == "qwen3-tts" {
+            let base = Command::new(&vpy).args(["-m", "pip", "install", "--upgrade", "--prefer-binary", "torch", "torchaudio", "transformers==4.57.3", "accelerate", "soundfile", "librosa", "einops", "onnxruntime", "sox"]).output().map_err(|e| format!("Qwen-Laufzeit konnte nicht installiert werden: {e}"))?;
+            let qwen = Command::new(&vpy).args(["-m", "pip", "install", "--upgrade", "--no-deps", "qwen-tts==0.1.1"]).output().map_err(|e| format!("Qwen-TTS konnte nicht installiert werden: {e}"))?;
+            if base.status.success() && qwen.status.success() { /* continue */ } else {
+                let detail = String::from_utf8_lossy(if !base.status.success() { &base.stderr } else { &qwen.stderr }).lines().rev().take(10).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" ");
+                return Err(format!("Qwen-TTS konnte nicht installiert werden: {detail}"));
+            }
+        } else {
+            let detail = String::from_utf8_lossy(&install.stderr).lines().rev().take(8).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" ");
+            return Err(format!("Installation von {package} fehlgeschlagen: {detail}"));
+        }
+    }
+    let runner = include_str!("../resources/local_tts_runner.py");
+    fs::write(root.join("runner.py"), runner).map_err(|e| e.to_string())?;
+    fs::write(root.join(".installed"), format!("provider={provider}\npackage={package}\n")).map_err(|e| e.to_string())?;
+    Ok(root.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn create_local_tts(app: tauri::AppHandle, text: String, provider: String, voice: String, speed: f32) -> Result<String, String> {
+    if text.trim().is_empty() { return Err("Kein Sprechertext vorhanden.".into()); }
+    let data_dir = ensure_data_dir(&app)?;
+    let root = local_tts_root(&data_dir, &provider);
+    if !local_tts_ready(&data_dir, &provider) { return Err(format!("{provider} ist noch nicht installiert. Richte ihn in den Einstellungen ein.")); }
+    let output = data_dir.join(format!("voice-local-{}.wav", timestamp()));
+    let vpy = root.join("venv").join("bin").join("python");
+    // Migrate runtimes created by older app builds before invoking TTS.
+    let bundled_runner = include_str!("../resources/local_tts_runner.py");
+    fs::write(root.join("runner.py"), bundled_runner)
+        .map_err(|e| format!("TTS-Runner konnte nicht aktualisiert werden: {e}"))?;
+    if provider == "qwen3-tts" {
+        patch_qwen_python_annotations(&vpy, &root)?;
+        let probe = Command::new(&vpy)
+            .args(["-c", "import sox"])
+            .output()
+            .map_err(|e| format!("Qwen-TTS-Abhängigkeit konnte nicht geprüft werden: {e}"))?;
+        if !probe.status.success() {
+            let repair = Command::new(&vpy)
+                .args(["-m", "pip", "install", "--upgrade", "--prefer-binary", "sox"])
+                .output()
+                .map_err(|e| format!("Python-Modul sox konnte nicht nachinstalliert werden: {e}"))?;
+            if !repair.status.success() {
+                let detail = String::from_utf8_lossy(&repair.stderr).trim().to_string();
+                return Err(format!("Python-Modul sox konnte nicht nachinstalliert werden: {detail}"));
+            }
+        }
+    }
+    let result = Command::new(vpy)
+        .arg(root.join("runner.py"))
+        .args(["--provider", &provider, "--text", &text, "--output"])
+        .arg(&output)
+        .args(["--voice", &voice, "--speed", &speed.to_string()])
+        .output()
+        .map_err(|e| format!("Lokale TTS-Ausführung fehlgeschlagen: {e}"))?;
+    if !result.status.success() {
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        let detail = if stderr.trim().is_empty() { stdout.trim() } else { stderr.trim() };
+        return Err(format!("Lokales TTS konnte keinen Audiostream erzeugen: {}", tail(detail, 1200)));
+    }
+    if !output.is_file() { return Err("Lokales TTS meldete Erfolg, aber keine Audiodatei wurde erzeugt.".into()); }
+    Ok(output.to_string_lossy().to_string())
+}
+
+fn available_tts_voices() -> Vec<String> {
+    let output = Command::new("/usr/bin/say").args(["-v", "?"]).output();
+    let Ok(output) = output else { return Vec::new(); };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.split_whitespace().next().map(str::to_string))
+        .filter(|name| !name.is_empty())
+        .collect()
+}
+
+#[tauri::command]
+async fn fetch_news_article(url: String) -> Result<NewsArticle, String> {
+    let url = url.trim();
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("Die News-Quelle muss eine HTTP(S)-URL sein.".into());
+    }
+
+    let parsed = reqwest::Url::parse(url).map_err(|e| format!("Ungültige URL: {e}"))?;
+    let site_name = parsed.host_str().unwrap_or("Unbekannte Quelle").trim_start_matches("www.").to_string();
+    let client = http_client()?;
+    let response = client
+        .get(parsed.clone())
+        .header(USER_AGENT, "TikTokNewsStudioLocal/0.2")
+        .send()
+        .await
+        .map_err(|e| format!("Nachrichtenquelle nicht erreichbar: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Nachrichtenquelle HTTP {}", response.status()));
+    }
+
+    if let Some(length) = response.content_length() {
+        if length > 10 * 1024 * 1024 {
+            return Err("Die Quellseite ist größer als 10 MB.".into());
+        }
+    }
+
+    let html = response.text().await.map_err(|e| format!("Quelltext konnte nicht gelesen werden: {e}"))?;
+    let title = extract_html_tag(&html, "title")
+        .map(|value| decode_entities(&strip_html(&value)))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| site_name.clone());
+
+    let main_html = best_content_section(&html);
+    let cleaned_html = remove_ignored_blocks(main_html);
+    let text = decode_entities(&strip_html(&cleaned_html));
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let text = truncate_chars(&text, 45_000);
+
+    if text.chars().count() < 120 {
+        return Err("Auf der Seite konnte kein ausreichender Artikeltext erkannt werden.".into());
+    }
+
+    let word_count = text.split_whitespace().count();
+    Ok(NewsArticle {
+        url: parsed.to_string(),
+        title,
+        text,
+        site_name,
+        word_count,
     })
 }
 
@@ -103,6 +355,7 @@ async fn wikimedia_search(query: String, limit: u8) -> Result<Vec<MediaResult>, 
             ("iiprop", "url|extmetadata"),
             ("iiurlwidth", "900"),
             ("format", "json"),
+            ("origin", "*"),
         ])
         .send()
         .await
@@ -155,11 +408,14 @@ fn create_tts(app: tauri::AppHandle, text: String, voice: String) -> Result<Stri
 
 #[tauri::command]
 async fn render_vertical_video(app: tauri::AppHandle, image_url: String, audio_path: String) -> Result<String, String> {
-    let ffmpeg = resolve_binary("ffmpeg").ok_or_else(|| "FFmpeg wurde nicht gefunden. Installiere es mit: brew install ffmpeg".to_string())?;
+    let dir = ensure_data_dir(&app)?;
+    let local_ffmpeg = dir.join("runtime").join("bin").join("ffmpeg");
+    let ffmpeg = resolve_binary("ffmpeg")
+        .or_else(|| local_ffmpeg.is_file().then_some(local_ffmpeg))
+        .ok_or_else(|| "FFmpeg wurde nicht gefunden. Richte es in den Einstellungen ein.".to_string())?;
     if !Path::new(&audio_path).exists() {
         return Err("TTS-Audiodatei wurde nicht gefunden.".into());
     }
-    let dir = ensure_data_dir(&app)?;
     let image_path = dir.join(format!("visual-{}.img", timestamp()));
     download_to(&image_url, &image_path).await?;
     let output = dir.join(format!("tiktok-news-{}.mp4", timestamp()));
@@ -242,7 +498,8 @@ async fn ollama_models() -> (bool, Vec<String>) {
 fn http_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .user_agent("TikTokNewsStudioLocal/0.1 (+https://github.com/xturn2u/make_tt_news)")
-        .timeout(Duration::from_secs(75))
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(25))
         .build()
         .map_err(|e| e.to_string())
 }
@@ -266,6 +523,67 @@ async fn download_to(url: &str, target: &Path) -> Result<(), String> {
         return Err("Bilddatei ist größer als 80 MB.".into());
     }
     fs::write(target, &bytes).map_err(|e| e.to_string())
+}
+
+fn best_content_section(html: &str) -> &str {
+    for tag in ["article", "main"] {
+        if let Some(section) = extract_html_tag(html, tag) {
+            let start = section.as_ptr() as usize - html.as_ptr() as usize;
+            return &html[start..start + section.len()];
+        }
+    }
+    html
+}
+
+fn extract_html_tag<'a>(html: &'a str, tag: &str) -> Option<&'a str> {
+    let lower = html.to_ascii_lowercase();
+    let open = format!("<{tag}");
+    let close = format!("</{tag}>");
+    let start = lower.find(&open)?;
+    let content_start = lower[start..].find('>')? + start + 1;
+    let end = lower[content_start..].find(&close)? + content_start;
+    Some(&html[content_start..end])
+}
+
+fn remove_ignored_blocks(input: &str) -> String {
+    let mut result = input.to_string();
+    for tag in ["script", "style", "svg", "noscript", "template"] {
+        loop {
+            let lower = result.to_ascii_lowercase();
+            let open = format!("<{tag}");
+            let close = format!("</{tag}>");
+            let Some(start) = lower.find(&open) else { break };
+            let Some(relative_end) = lower[start..].find(&close) else {
+                result.truncate(start);
+                break;
+            };
+            let end = start + relative_end + close.len();
+            result.replace_range(start..end, " ");
+        }
+    }
+    result
+}
+
+fn decode_entities(input: &str) -> String {
+    input
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#34;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&ndash;", "–")
+        .replace("&mdash;", "—")
+}
+
+fn truncate_chars(input: &str, max: usize) -> String {
+    if input.chars().count() <= max {
+        input.to_string()
+    } else {
+        input.chars().take(max).collect()
+    }
 }
 
 fn metadata(info: &Value, key: &str) -> Option<String> {
@@ -308,11 +626,152 @@ fn tail(value: &str, max: usize) -> String {
     if chars.len() <= max { value.to_string() } else { chars[chars.len()-max..].iter().collect() }
 }
 
+
+#[tauri::command]
+async fn ollama_pull_model(app: tauri::AppHandle, model: String) -> Result<(), String> {
+    let model = model.trim();
+    if model.is_empty() { return Err("Kein Modell ausgewählt.".into()); }
+    let client = http_client()?;
+    let request = || client.post("http://127.0.0.1:11434/api/pull")
+        .json(&json!({"name": model, "stream": true}));
+    let response = match request().send().await {
+        Ok(response) if response.status().is_success() => response,
+        _ => {
+            // Ollama can be installed but still starting in the background.
+            let _ = Command::new("/usr/bin/open").args(["-a", "Ollama"]).status();
+            std::thread::sleep(Duration::from_secs(2));
+            request().send().await.map_err(|_| "Local-AI-Runtime konnte nicht erreicht werden. Bitte die Runtime in den Einstellungen erneut starten.".to_string())?
+        }
+    };
+    if !response.status().is_success() {
+        return Err(format!("Modell konnte nicht geladen werden (Ollama HTTP {}).", response.status()));
+    }
+
+    let _ = app.emit("model-progress", json!({"model": model, "status": "Download gestartet", "percent": 0}));
+    let mut stream = response.bytes_stream();
+    let mut buffer = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Modell-Download fehlgeschlagen: {e}"))?;
+        buffer.extend_from_slice(&chunk);
+        while let Some(position) = buffer.iter().position(|byte| *byte == b'\n') {
+            let line: Vec<u8> = buffer.drain(..=position).collect();
+            let line = String::from_utf8_lossy(&line);
+            if let Ok(value) = serde_json::from_str::<Value>(line.trim()) {
+                let status = value.get("status").and_then(Value::as_str).unwrap_or("Lädt …");
+                let completed = value.get("completed").and_then(Value::as_u64);
+                let total = value.get("total").and_then(Value::as_u64);
+                let percent = match (completed, total) {
+                    (Some(done), Some(total)) if total > 0 => Some((done as f64 / total as f64) * 100.0),
+                    _ => None,
+                };
+                let _ = app.emit("model-progress", json!({
+                    "model": model,
+                    "status": status,
+                    "completed": completed,
+                    "total": total,
+                    "percent": percent
+                }));
+            }
+        }
+    }
+    if !buffer.is_empty() {
+        if let Ok(value) = serde_json::from_slice::<Value>(&buffer) {
+            let status = value.get("status").and_then(Value::as_str).unwrap_or("Installation abgeschlossen");
+            let _ = app.emit("model-progress", json!({"model": model, "status": status, "percent": 100}));
+        }
+    }
+    let _ = app.emit("model-progress", json!({"model": model, "status": "Installation abgeschlossen", "percent": 100}));
+    Ok(())
+}
+
+#[tauri::command]
+async fn install_ollama(app: tauri::AppHandle) -> Result<String, String> {
+    let dir = ensure_data_dir(&app)?.join("runtime");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let archive = dir.join("Ollama-darwin.zip");
+    let bytes = http_client()?.get("https://ollama.com/download/Ollama-darwin.zip")
+        .send().await.map_err(|e| format!("Ollama-Download fehlgeschlagen: {e}"))?
+        .bytes().await.map_err(|e| e.to_string())?;
+    fs::write(&archive, &bytes).map_err(|e| e.to_string())?;
+    let unpack = dir.join("unpacked");
+    let _ = fs::remove_dir_all(&unpack);
+    fs::create_dir_all(&unpack).map_err(|e| e.to_string())?;
+    let status = Command::new("/usr/bin/ditto").args(["-x", "-k"]).arg(&archive).arg(&unpack).status().map_err(|e| e.to_string())?;
+    if !status.success() { return Err("Ollama-Archiv konnte nicht entpackt werden.".into()); }
+    let app_bundle = find_named_path(&unpack, "Ollama.app").ok_or("Ollama-App wurde im Download nicht gefunden.")?;
+    let home = env::var_os("HOME").ok_or("Benutzerordner nicht gefunden.")?;
+    let destination = PathBuf::from(home).join("Applications").join("Ollama.app");
+    fs::create_dir_all(destination.parent().unwrap()).map_err(|e| e.to_string())?;
+    let _ = Command::new("/usr/bin/ditto").arg(&app_bundle).arg(&destination).status();
+    let _ = Command::new("/usr/bin/open").arg("-a").arg(&destination).status();
+    Ok(destination.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn install_ffmpeg(app: tauri::AppHandle) -> Result<String, String> {
+    if let Some(path) = resolve_binary("ffmpeg") { return Ok(path.to_string_lossy().to_string()); }
+    if let Some(brew) = resolve_binary("brew") {
+        let status = Command::new(brew).args(["install", "ffmpeg"]).status().map_err(|e| format!("FFmpeg-Installation konnte nicht gestartet werden: {e}"))?;
+        if status.success() {
+            if let Some(path) = resolve_binary("ffmpeg") { return Ok(path.to_string_lossy().to_string()); }
+        }
+    }
+
+    // Fallback: install a self-contained binary into the app data directory.
+    let runtime = ensure_data_dir(&app)?.join("runtime");
+    let bin_dir = runtime.join("bin");
+    fs::create_dir_all(&bin_dir).map_err(|e| e.to_string())?;
+    let destination = bin_dir.join("ffmpeg");
+    if destination.is_file() {
+        let _ = Command::new("/bin/chmod").args(["755", destination.to_string_lossy().as_ref()]).status();
+        return Ok(destination.to_string_lossy().to_string());
+    }
+    let url = if env::consts::ARCH == "aarch64" {
+        "https://www.osxexperts.net/ffmpeg80arm.zip"
+    } else {
+        "https://www.osxexperts.net/ffmpeg80intel.zip"
+    };
+    let archive = runtime.join(format!("ffmpeg-{}.zip", timestamp()));
+    let response = http_client()?.get(url).send().await.map_err(|e| format!("FFmpeg-Download fehlgeschlagen: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("FFmpeg-Download HTTP {}", response.status()));
+    }
+    let bytes = response.bytes().await.map_err(|e| format!("FFmpeg-Download fehlgeschlagen: {e}"))?;
+    fs::write(&archive, &bytes).map_err(|e| e.to_string())?;
+    let unpack = runtime.join(format!("ffmpeg-unpacked-{}", timestamp()));
+    fs::create_dir_all(&unpack).map_err(|e| e.to_string())?;
+    let status = Command::new("/usr/bin/ditto").args(["-x", "-k"]).arg(&archive).arg(&unpack).status().map_err(|e| e.to_string())?;
+    if !status.success() { return Err("FFmpeg-Archiv konnte nicht entpackt werden.".into()); }
+    let source = find_named_path(&unpack, "ffmpeg").ok_or("FFmpeg-Binary wurde im Download nicht gefunden.")?;
+    fs::copy(&source, &destination).map_err(|e| format!("FFmpeg konnte nicht eingerichtet werden: {e}"))?;
+    let _ = Command::new("/bin/chmod").args(["755", destination.to_string_lossy().as_ref()]).status();
+    let _ = fs::remove_file(&archive);
+    let _ = fs::remove_dir_all(&unpack);
+    Ok(destination.to_string_lossy().to_string())
+}
+
+fn find_named_path(root: &Path, name: &str) -> Option<PathBuf> {
+    if root.file_name().and_then(|v| v.to_str()) == Some(name) { return Some(root.to_path_buf()); }
+    if !root.is_dir() { return None; }
+    let entries = fs::read_dir(root).ok()?;
+    for entry in entries.flatten() {
+        if let Some(found) = find_named_path(&entry.path(), name) { return Some(found); }
+    }
+    None
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             system_status,
+            local_tts_status,
+            install_local_tts,
+            create_local_tts,
+            install_ollama,
+            ollama_pull_model,
+            install_ffmpeg,
+            fetch_news_article,
             ollama_generate,
             wikimedia_search,
             create_tts,

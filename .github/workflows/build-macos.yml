@@ -2,8 +2,12 @@ name: Build macOS MVP
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/contentflow-studio-v1, feature/in-app-runtime-manager, feature/ux-captions-cancel-debug, feature/local-ai-tts-qwen-chatterbox]
   workflow_dispatch:
+
+concurrency:
+  group: mac-build-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -45,16 +49,25 @@ jobs:
         run: npm ci
       - name: Build universal macOS app
         run: npm run tauri:build -- --target universal-apple-darwin --bundles app
-      - name: Package app bundle
+      - name: Verify app bundle
         run: |
-          package_dir=$(mktemp -d)
-          archive_path="$package_dir/TikTok-News-Studio-Local-macOS-universal.zip"
-          zip -qry "$archive_path" "src-tauri/target/universal-apple-darwin/release/bundle/macos/TikTok News Studio Local.app"
-          unzip -t "$archive_path"
-          mv "$archive_path" "TikTok-News-Studio-Local-macOS-universal.zip"
-      - name: Upload macOS app
+          test -d "src-tauri/target/universal-apple-darwin/release/bundle/macos/TikTok News Studio Local.app"
+          test -x "src-tauri/target/universal-apple-darwin/release/bundle/macos/TikTok News Studio Local.app/Contents/MacOS/tiktok-news-studio-local"
+      - name: Create DMG installer
+        run: |
+          mkdir -p dist
+          cp -R "src-tauri/target/universal-apple-darwin/release/bundle/macos/TikTok News Studio Local.app" dist/
+          hdiutil create -volname "ContentFlow Studio" -srcfolder dist -ov -format UDZO "ContentFlow-Studio-macOS-universal.dmg"
+      - name: Upload DMG installer
         uses: actions/upload-artifact@v4
         with:
-          name: TikTok-News-Studio-Local-macOS-universal
-          path: TikTok-News-Studio-Local-macOS-universal.zip
+          name: ContentFlow-Studio-macOS-universal-dmg
+          path: ContentFlow-Studio-macOS-universal.dmg
           if-no-files-found: error
+      - name: Upload app bundle directly
+        uses: actions/upload-artifact@v4
+        with:
+          name: ContentFlow-Studio-macOS-universal-app
+          path: src-tauri/target/universal-apple-darwin/release/bundle/macos/TikTok News Studio Local.app
+          if-no-files-found: error
+          include-hidden-files: true

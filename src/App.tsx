@@ -1,263 +1,820 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  addEdge,
+  reconnectEdge,
   Background,
   Controls,
   MiniMap,
   ReactFlow,
+  ReactFlowProvider,
+  useEdgesState,
+  useNodesState,
+  useReactFlow,
+  type Connection,
   type Edge,
   type Node
 } from '@xyflow/react';
+import InspectorPanel from './components/InspectorPanel';
+import SettingsPanel from './components/SettingsPanel';
+import NodeLibrary from './components/NodeLibrary';
 import StudioNode from './components/StudioNode';
 import {
   createTts,
+  createLocalTts,
+  fetchNewsArticle,
+  mediaFileUrl,
   ollamaGenerate,
   renderVerticalVideo,
-  replicatePredict,
   revealInFinder,
   searchWikimedia,
   systemStatus
 } from './desktop';
-import type { MediaResult, NodeStatus, ReplicateResult, StudioNodeData, SystemStatus } from './types';
+import { createFlowNode } from './flow/catalog';
+import { DEFAULT_EDGES, DEFAULT_NODES } from './flow/defaultFlow';
+import { createExecutionPlan, validateNewsFlow } from './flow/engine';
+import type { MediaResult, NewsArticle, NodeConfig, NodeStatus, StepResult, StudioNodeData, SystemStatus } from './types';
+import type { LocalTtsProvider } from './localTts';
 
-const initialNodes: Node<StudioNodeData>[] = [
-  { id: 'input', type: 'studio', position: { x: 40, y: 210 }, data: { title: 'News Input', subtitle: 'Geprüfter Artikeltext', icon: '📰', status: 'idle' } },
-  { id: 'ai', type: 'studio', position: { x: 290, y: 210 }, data: { title: 'Local AI', subtitle: 'Ollama → Sprechertext', icon: '✦', status: 'idle' } },
-  { id: 'image', type: 'studio', position: { x: 540, y: 120 }, data: { title: 'Bildsuche', subtitle: 'Wikimedia Commons', icon: '⌕', status: 'idle' } },
-  { id: 'tts', type: 'studio', position: { x: 540, y: 300 }, data: { title: 'Local TTS', subtitle: 'macOS say', icon: '◖', status: 'idle' } },
-  { id: 'replicate', type: 'studio', position: { x: 790, y: 80 }, data: { title: 'Replicate', subtitle: 'optional Img2Video/API', icon: '↗', status: 'idle' } },
-  { id: 'render', type: 'studio', position: { x: 790, y: 260 }, data: { title: 'Video Render', subtitle: 'FFmpeg · 1080×1920', icon: '▶', status: 'idle' } },
-  { id: 'export', type: 'studio', position: { x: 1040, y: 260 }, data: { title: 'Export', subtitle: 'Lokale MP4', icon: '⇩', status: 'idle' } }
-];
+type StoredProject = { id: string; title: string; nodes: Node<StudioNodeData>[]; edges: Edge[]; model: string; updatedAt: string };
 
-const initialEdges: Edge[] = [
-  { id: 'e1', source: 'input', target: 'ai', animated: true },
-  { id: 'e2', source: 'ai', target: 'image' },
-  { id: 'e3', source: 'ai', target: 'tts' },
-  { id: 'e4', source: 'image', target: 'replicate' },
-  { id: 'e5', source: 'image', target: 'render' },
-  { id: 'e6', source: 'tts', target: 'render' },
-  { id: 'e7', source: 'render', target: 'export', animated: true }
-];
-
-const nodeTypes = { studio: StudioNode };
+type RunContext = {
+  url?: string;
+  article?: NewsArticle;
+  research?: string;
+  script?: string;
+  assetQuery?: string;
+  asset?: MediaResult;
+  assets?: MediaResult[];
+  audioPath?: string;
+  videoPath?: string;
+};
 
 export default function App() {
-  const [nodes, setNodes] = useState(initialNodes);
+  return (
+    <ReactFlowProvider>
+      <Studio />
+    </ReactFlowProvider>
+  );
+}
+
+function Studio() {
+  const [nodes, setNodes, onNodesChange] = useNodesState(DEFAULT_NODES);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(DEFAULT_EDGES);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>('news-url-1');
   const [health, setHealth] = useState<SystemStatus | null>(null);
-  const [article, setArticle] = useState('');
-  const [script, setScript] = useState('');
   const [model, setModel] = useState('');
-  const [imageQuery, setImageQuery] = useState('');
-  const [images, setImages] = useState<MediaResult[]>([]);
-  const [selectedImage, setSelectedImage] = useState<MediaResult | null>(null);
-  const [audioPath, setAudioPath] = useState('');
-  const [videoPath, setVideoPath] = useState('');
-  const [useReplicate, setUseReplicate] = useState(false);
-  const [replicateToken, setReplicateToken] = useState('');
-  const [replicateModel, setReplicateModel] = useState('');
-  const [replicateInput, setReplicateInput] = useState('{\n  "prompt": "subtle cinematic motion",\n  "image": "__IMAGE_URL__"\n}');
-  const [replicateResult, setReplicateResult] = useState<ReplicateResult | null>(null);
   const [running, setRunning] = useState(false);
-  const [log, setLog] = useState<string[]>(['Bereit. Systemprüfung wird gestartet …']);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [debugMode, setDebugMode] = useState(() => localStorage.getItem('contentflow.debug') === 'true');
+  const [debugStops, setDebugStops] = useState(() => localStorage.getItem('contentflow.debugStops') === 'true');
+  const [breakpoints, setBreakpoints] = useState<Record<string, boolean>>(() => readJson<Record<string, boolean>>('contentflow.breakpoints', {}));
+  const [resultNodeId, setResultNodeId] = useState<string | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [flowTemplates, setFlowTemplates] = useState<StoredProject[]>(() => readJson<StoredProject[]>('contentflow.flowTemplates', []));
+  const [flowTemplateTitle, setFlowTemplateTitle] = useState('');
+  const [projectTitle, setProjectTitle] = useState(() => localStorage.getItem('contentflow.project.title') || 'Neues Projekt');
+  const [projects, setProjects] = useState<StoredProject[]>(() => readStoredProjects());
+  const [memoryItems, setMemoryItems] = useState<MediaResult[]>([]);
+  const [videoEditorOpen, setVideoEditorOpen] = useState(false);
+  const cancelRequested = useRef(false);
+  const [outputPath, setOutputPath] = useState('');
+  const [logs, setLogs] = useState<string[]>(['ContentFlow Studio bereit.']);
+  const [agentActivity, setAgentActivity] = useState<Record<string, string[]>>({});
+  const [activeProcessNodeId, setActiveProcessNodeId] = useState<string | null>(null);
+  const [pausedNodeId, setPausedNodeId] = useState<string | null>(null);
+  const cancelRejectRef = useRef<(() => void) | null>(null);
+  const runContextRef = useRef<RunContext | null>(null);
+  const { screenToFlowPosition } = useReactFlow();
+
+  const selectedNode = useMemo(
+    () => nodes.find((node) => node.id === selectedNodeId) ?? null,
+    [nodes, selectedNodeId]
+  );
+
+  const sourceNode = useMemo(
+    () => nodes.find((node) => node.data.moduleId === 'news-url') ?? null,
+    [nodes]
+  );
+
+  const sourceUrl = sourceNode ? String(sourceNode.data.config.url ?? '') : '';
 
   const addLog = useCallback((message: string) => {
-    setLog((old) => [`${new Date().toLocaleTimeString('de-DE')} · ${message}`, ...old].slice(0, 50));
+    setLogs((current) => [`${new Date().toLocaleTimeString('de-DE')} · ${message}`, ...current].slice(0, 80));
   }, []);
 
-  const setNodeStatus = useCallback((id: string, status: NodeStatus, detail?: string) => {
-    setNodes((current) => current.map((node) => node.id === id ? { ...node, data: { ...node.data, status, detail } } : node));
+  const pushAgentActivity = useCallback((nodeId: string, message: string) => {
+    setAgentActivity((current) => ({
+      ...current,
+      [nodeId]: [...(current[nodeId] ?? []), `${new Date().toLocaleTimeString('de-DE')} · ${message}`].slice(-80)
+    }));
   }, []);
+
+  const setNodeResult = useCallback((nodeId: string, result?: StepResult) => {
+    setNodes((current) => current.map((node) =>
+      node.id === nodeId ? { ...node, data: { ...node.data, result } } : node
+    ));
+  }, [setNodes]);
+
+  const runAgentCommand = useCallback(async (nodeId: string, command: string) => {
+    const node = nodes.find((item) => item.id === nodeId);
+    if (!node || !command.trim()) return;
+    pushAgentActivity(nodeId, `Zusatzkommando: ${command.trim()}`);
+    if (!health?.ollamaAvailable || !model) {
+      pushAgentActivity(nodeId, 'Lokale KI nicht erreichbar · Kommando nicht ausgeführt.');
+      return;
+    }
+    try {
+      pushAgentActivity(nodeId, 'Zusatzkommando wird verarbeitet …');
+      const prompt = String(node.data.config.prompt ?? '');
+      const response = await ollamaGenerate(model, `${prompt}\\n\\nEINGABE AUS AGENTENKONSOLE:\\n${command.trim()}`);
+      setNodeResult(nodeId, { kind: 'text', value: response, label: 'Agenten-Antwort' });
+      pushAgentActivity(nodeId, 'Antwort bereit und als Ergebnis gespeichert.');
+    } catch (error) {
+      pushAgentActivity(nodeId, `Fehler: ${errorText(error)}`);
+    }
+  }, [health, model, nodes, pushAgentActivity, setNodeResult]);
+
+  const toggleBreakpoint = useCallback((nodeId: string) => {
+    setBreakpoints((current) => {
+      const next = { ...current, [nodeId]: !current[nodeId] };
+      localStorage.setItem('contentflow.breakpoints', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const setNodeStatus = useCallback((nodeId: string, status: NodeStatus, detail?: string) => {
+    setNodes((current) => current.map((node) =>
+      node.id === nodeId
+        ? { ...node, data: { ...node.data, status, detail } }
+        : node
+    ));
+  }, [setNodes]);
+
+  const updateNodeConfig = useCallback((nodeId: string, config: NodeConfig) => {
+    setNodes((current) => current.map((node) =>
+      node.id === nodeId
+        ? { ...node, data: { ...node.data, config } }
+        : node
+    ));
+  }, [setNodes]);
 
   const refreshHealth = useCallback(async () => {
     try {
       const status = await systemStatus();
       setHealth(status);
-      if (!model && status.ollamaModels.length) setModel(status.ollamaModels[0]);
-      addLog(`System: TTS ${status.sayAvailable ? 'OK' : 'fehlt'}, FFmpeg ${status.ffmpegAvailable ? 'OK' : 'fehlt'}, Ollama ${status.ollamaAvailable ? 'OK' : 'nicht aktiv'}.`);
+      setModel((current) => current || status.ollamaModels[0] || '');
+      addLog(`Systemcheck: Ollama ${status.ollamaAvailable ? 'OK' : 'aus'}, FFmpeg ${status.ffmpegAvailable ? 'OK' : 'fehlt'}, TTS ${status.sayAvailable || status.localTtsReady ? 'OK' : 'fehlt'}.`);
     } catch (error) {
-      addLog(`Systemprüfung fehlgeschlagen: ${errorText(error)}`);
+      addLog(`Systemcheck fehlgeschlagen: ${errorText(error)}`);
     }
-  }, [addLog, model]);
+  }, [addLog]);
 
-  useEffect(() => { void refreshHealth(); }, []); // intentionally once
+  useEffect(() => {
+    void refreshHealth();
+  }, [refreshHealth]);
 
-  const searchImages = useCallback(async (queryOverride?: string) => {
-    const query = (queryOverride ?? imageQuery).trim();
-    if (!query) throw new Error('Bitte einen Suchbegriff angeben.');
-    setNodeStatus('image', 'running', query);
-    const found = await searchWikimedia(query, 8);
-    if (!found.length) {
-      setNodeStatus('image', 'warning', 'Keine Treffer');
-      throw new Error(`Keine Wikimedia-Bilder für „${query}“ gefunden.`);
-    }
-    setImages(found);
-    setSelectedImage(found[0]);
-    setNodeStatus('image', 'success', `${found.length} Treffer`);
-    addLog(`${found.length} lizenzierte Wikimedia-Medien gefunden.`);
-    return found[0];
-  }, [addLog, imageQuery, setNodeStatus]);
+  useEffect(() => {
+    const snapshot: StoredProject = { id: 'current', title: projectTitle || 'Neues Projekt', nodes, edges, model, updatedAt: new Date().toISOString() };
+    localStorage.setItem('contentflow.flow', JSON.stringify(snapshot));
+    localStorage.setItem('contentflow.project.title', projectTitle);
+    setProjects((current) => {
+      const existing = current.filter((project) => project.id !== 'current' && project.title !== snapshot.title);
+      return [snapshot, ...existing].slice(0, 12);
+    });
+  }, [edges, model, nodes, projectTitle]);
 
-  const runWorkflow = useCallback(async () => {
+  useEffect(() => {
+    localStorage.setItem('contentflow.projects', JSON.stringify(projects));
+  }, [projects]);
+
+  const setSourceUrl = useCallback((url: string) => {
+    if (!sourceNode) return;
+    updateNodeConfig(sourceNode.id, { ...sourceNode.data.config, url });
+  }, [sourceNode, updateNodeConfig]);
+
+  const addModule = useCallback((moduleId: string, position?: { x: number; y: number }) => {
+    const id = `${moduleId}-${crypto.randomUUID().slice(0, 8)}`;
+    const fallback = { x: 420 + (nodes.length % 4) * 55, y: 160 + (nodes.length % 5) * 75 };
+    const node = createFlowNode(moduleId, id, position ?? fallback);
+    setNodes((current) => [...current, node]);
+    setSelectedNodeId(id);
+    addLog(`${node.data.title} zum Flow hinzugefügt.`);
+  }, [addLog, nodes.length, setNodes]);
+
+  const deleteNode = useCallback((nodeId: string) => {
+    setNodes((current) => current.filter((node) => node.id !== nodeId));
+    setEdges((current) => current.filter((edge) => edge.source !== nodeId && edge.target !== nodeId));
+    setSelectedNodeId((current) => current === nodeId ? null : current);
+  }, [setEdges, setNodes]);
+
+  const onConnect = useCallback((connection: Connection) => {
+    setEdges((current) => addEdge({ ...connection, animated: false }, current));
+  }, [setEdges]);
+
+  const onReconnect = useCallback((oldEdge: Edge, connection: Connection) => {
+    setEdges((current) => reconnectEdge(oldEdge, connection, current));
+  }, [setEdges]);
+
+  const onDrop = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    const moduleId = event.dataTransfer.getData('application/x-contentflow-node');
+    if (!moduleId) return;
+    const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+    addModule(moduleId, position);
+  }, [addModule, screenToFlowPosition]);
+
+  const runFlow = useCallback(async (startNodeId?: string, overrides: Record<string, string> = {}) => {
     if (running) return;
-    if (!article.trim()) {
-      addLog('Abbruch: News Input ist leer.');
+
+    const warnings = validateNewsFlow(nodes, edges);
+    if (warnings.length) {
+      warnings.forEach(addLog);
       return;
     }
 
+    let plan;
+    try {
+      plan = createExecutionPlan(nodes, edges);
+    } catch (error) {
+      addLog(errorText(error));
+      return;
+    }
+
+    const executionOrder = startNodeId ? plan.order.slice(Math.max(0, plan.order.indexOf(startNodeId))) : plan.order;
+    cancelRequested.current = false;
     setRunning(true);
-    setVideoPath('');
-    setAudioPath('');
-    setReplicateResult(null);
-    ['input','ai','image','tts','replicate','render','export'].forEach((id) => setNodeStatus(id, 'idle'));
+    const cancellation = new Promise<never>((_, reject) => { cancelRejectRef.current = () => reject(new Error('Workflow vom Benutzer abgebrochen.')); });
+    const cancellable = <T,>(promise: Promise<T>) => Promise.race([promise, cancellation]);
+    setOutputPath('');
+    setNodes((current) => current.map((node) => ({ ...node, data: { ...node.data, status: 'idle' as NodeStatus, detail: undefined } })));
+    addLog(`${startNodeId ? 'Flow ab' : 'Flow'} gestartet: ${executionOrder.length} Module.`);
+
+    const ctx: RunContext = startNodeId && runContextRef.current ? runContextRef.current : {};
 
     try {
-      setNodeStatus('input', 'success', `${article.trim().split(/\s+/).length} Wörter`);
+      for (const nodeId of executionOrder) {
+        if (cancelRequested.current) throw new Error('Workflow vom Benutzer abgebrochen.');
+        const node = nodes.find((item) => item.id === nodeId);
+        if (!node) continue;
+        setActiveProcessNodeId(node.id);
 
-      let finalScript = script.trim();
-      setNodeStatus('ai', 'running', health?.ollamaAvailable && model ? model : 'Fallback');
-      if (health?.ollamaAvailable && model) {
-        finalScript = await ollamaGenerate(model, buildNewsPrompt(article));
-        setScript(finalScript);
-        setNodeStatus('ai', 'success', model);
-        addLog(`Sprechertext lokal mit ${model} erstellt.`);
-      } else {
-        finalScript = fallbackScript(article);
-        setScript(finalScript);
-        setNodeStatus('ai', 'warning', 'Ollama nicht aktiv · sicherer Fallback');
-        addLog('Ollama ist nicht aktiv. Der lokale, nicht-generative Fallbacktext wird verwendet.');
-      }
-
-      const query = imageQuery.trim() || deriveQuery(article);
-      if (!imageQuery.trim()) setImageQuery(query);
-      const chosen = selectedImage && images.length ? selectedImage : await searchImages(query);
-
-      setNodeStatus('tts', 'running', 'macOS say');
-      const voiceFile = await createTts(finalScript, '');
-      setAudioPath(voiceFile);
-      setNodeStatus('tts', 'success', 'AIFF erzeugt');
-      addLog('TTS vollständig lokal erzeugt.');
-
-      if (useReplicate) {
-        if (!replicateToken.trim() || !replicateModel.trim()) {
-          setNodeStatus('replicate', 'warning', 'Token/Modell fehlt');
-          addLog('Replicate übersprungen: Token oder Modellkennung fehlt.');
-        } else {
-          setNodeStatus('replicate', 'running', replicateModel);
-          const payload = replicateInput.replaceAll('__IMAGE_URL__', chosen.originalUrl);
-          const result = await replicatePredict(replicateToken.trim(), replicateModel.trim(), payload);
-          setReplicateResult(result);
-          setNodeStatus('replicate', result.status === 'failed' ? 'error' : 'success', String(result.status ?? 'gestartet'));
-          addLog(`Replicate: ${String(result.status ?? 'Prediction erstellt')}.`);
+        if (debugStops && breakpoints[node.id]) {
+          setNodeStatus(node.id, 'warning', 'Debug-Haltepunkt');
+          setPausedNodeId(node.id);
+          runContextRef.current = ctx;
+          addLog(`Debug-Haltepunkt vor ${node.data.title}. Flow pausiert. Haltepunkt deaktivieren, um fortzufahren.`);
+          return;
         }
-      } else {
-        setNodeStatus('replicate', 'skipped', 'optional');
+        setNodeStatus(node.id, 'running', 'Wird ausgeführt …');
+        if (node.data.category === 'agent') pushAgentActivity(node.id, `Schritt gestartet · Modell ${model || 'Fallback'}`);
+        const moduleId = node.data.moduleId;
+        const config = node.data.config;
+
+        if (moduleId === 'news-url') {
+          const url = String(config.url ?? '').trim();
+          if (!url) throw new Error('Im News-URL-Node fehlt der Nachrichten-Link.');
+          ctx.url = url;
+          setNodeStatus(node.id, 'success', new URL(url).hostname);
+          setNodeResult(node.id, { kind: 'text', value: url, label: 'News URL' });
+          continue;
+        }
+
+        if (moduleId === 'article-reader') {
+          if (!ctx.url) throw new Error('Artikel laden benötigt eine News URL.');
+          ctx.article = await cancellable(fetchNewsArticle(ctx.url));
+          if (!projectTitle || projectTitle === 'Neues Projekt') {
+            const generatedTitle = health?.ollamaAvailable && model ? normalizeProjectTitle(await cancellable(ollamaGenerate(model, buildProjectTitlePrompt(ctx.article)))) : ctx.article.title;
+            setProjectTitle(generatedTitle || ctx.article.title);
+            addLog(`Projekttitel gesetzt: ${generatedTitle || ctx.article.title}`);
+          }
+          setNodeStatus(node.id, 'success', `${ctx.article.wordCount} Wörter · ${ctx.article.siteName}`);
+          addLog(`Artikel geladen: ${ctx.article.title}`);
+          setNodeResult(node.id, { kind: 'text', value: ctx.article.text, label: ctx.article.title });
+          continue;
+        }
+
+        if (moduleId === 'research-agent') {
+          if (!ctx.article) throw new Error('Research Agent benötigt einen geladenen Artikel.');
+          const instruction = String(config.prompt ?? '');
+          if (health?.ollamaAvailable && model) {
+            pushAgentActivity(node.id, 'Prompt wird an Ollama gesendet …');
+            try {
+              ctx.research = await cancellable(ollamaGenerate(model, buildResearchPrompt(ctx.article, instruction)));
+              setNodeStatus(node.id, 'success', model);
+            } catch (error) {
+              if (cancelRequested.current) throw error;
+              pushAgentActivity(node.id, `Ollama nicht erreichbar · Fallback: ${errorText(error)}`);
+              ctx.research = ctx.article.text;
+              setNodeStatus(node.id, 'warning', 'Ollama nicht erreichbar · Quelltext weitergegeben');
+              addLog('Research Agent: Ollama-Anfrage fehlgeschlagen, Quelltext als Fallback übernommen.');
+            }
+          } else {
+            pushAgentActivity(node.id, 'Lokale KI nicht erreichbar · Fallback wird verwendet.');
+            ctx.research = ctx.article.text;
+            setNodeStatus(node.id, 'warning', 'Lokale KI nicht aktiv · Quelltext weitergegeben');
+          }
+          setNodeResult(node.id, { kind: 'text', value: ctx.research ?? '', label: 'Research-Ergebnis' });
+          pushAgentActivity(node.id, 'Ergebnis übernommen.');
+          continue;
+        }
+
+        if (moduleId === 'script-agent') {
+          if (!ctx.article) throw new Error('Script Agent benötigt Artikeldaten.');
+          const duration = Number(config.duration ?? 55);
+          if (health?.ollamaAvailable && model) {
+            pushAgentActivity(node.id, 'Sprechertext-Prompt wird verarbeitet …');
+            ctx.script = await cancellable(ollamaGenerate(model, buildScriptPrompt(ctx.article, ctx.research ?? ctx.article.text, duration, String(config.style ?? 'seriös'))));
+            setNodeStatus(node.id, 'success', `${model} · ~${duration}s`);
+          } else {
+            ctx.script = fallbackScript(ctx.article, duration);
+            setNodeStatus(node.id, 'warning', 'Fallback ohne generative KI');
+          }
+          addLog('Sprechertext erzeugt.');
+          setNodeResult(node.id, { kind: 'text', value: ctx.script, label: 'Sprechertext' });
+          pushAgentActivity(node.id, 'Sprechertext bereit.');
+          continue;
+        }
+
+        if (moduleId === 'storyboard-agent') {
+          if (!ctx.article) throw new Error('Storyboard Agent benötigt Artikeldaten.');
+          if (health?.ollamaAvailable && model) {
+            const response = await cancellable(ollamaGenerate(model, buildStoryboardPrompt(ctx.article, ctx.script ?? '', Number(config.scenes ?? 6))));
+            ctx.assetQuery = normalizeSearchQuery(response) || deriveQuery(ctx.article);
+            setNodeStatus(node.id, 'success', ctx.assetQuery);
+          } else {
+            ctx.assetQuery = deriveQuery(ctx.article);
+            setNodeStatus(node.id, 'warning', ctx.assetQuery);
+          }
+          setNodeResult(node.id, { kind: 'text', value: ctx.assetQuery ?? '', label: 'Suchbegriff' });
+          continue;
+        }
+
+        if (moduleId === 'asset-search') {
+          if (!ctx.article) throw new Error('Asset Search benötigt Artikeldaten.');
+          const query = overrides[node.id] ?? (String(config.query ?? '').trim() || ctx.assetQuery || deriveQuery(ctx.article));
+          const results = await cancellable(searchWikimedia(query, Number(config.limit ?? 8)));
+          if (!results.length) {
+            const message = `Keine Medien für „${query}“ gefunden.`;
+            setNodes((current) => current.map((item) => item.id === node.id ? { ...item, data: { ...item.data, status: 'warning' as NodeStatus, detail: message, needsInput: { message } } } : item));
+            runContextRef.current = ctx;
+            addLog(`${message} Manuelle Suche möglich.`);
+            return;
+          }
+          ctx.assets = results;
+          ctx.asset = results[0];
+          setMemoryItems(results);
+          setNodes((current) => current.map((item) => item.id === node.id ? { ...item, data: { ...item.data, needsInput: undefined } } : item));
+          setNodeStatus(node.id, 'success', `${results.length} Treffer · ${ctx.asset.license}`);
+          addLog(`Asset Search: ${results.length} Treffer für „${query}“.`);
+          setNodeResult(node.id, { kind: 'media', value: JSON.stringify(results), label: `${results.length} Assets` });
+          continue;
+        }
+
+        if (moduleId === 'memory-card') {
+          setNodeStatus(node.id, 'success', `${memoryItems.length || ctx.assets?.length || 0} Medien im Speicher`);
+          addLog('Memory Card für weitere Flow-Schritte bereit.');
+          setNodeResult(node.id, { kind: 'media', value: JSON.stringify(ctx.assets ?? []), label: `${ctx.assets?.length ?? memoryItems.length} Assets gespeichert` });
+          continue;
+        }
+
+        if (moduleId === 'custom-agent') {
+          const prompt = String(config.prompt ?? '').trim();
+          const input = ctx.script ?? ctx.research ?? ctx.article?.text ?? '';
+          if (!prompt) throw new Error('Der freie Agent benötigt einen Prompt.');
+          if (health?.ollamaAvailable && model) {
+            const result = await cancellable(ollamaGenerate(model, `${prompt}\n\nEINGABE:\n${input}`));
+            ctx.research = result;
+            setNodeStatus(node.id, 'success', String(config.name ?? 'Freier Agent'));
+          } else {
+            setNodeStatus(node.id, 'warning', 'Prompt gespeichert · lokale KI nicht aktiv');
+          }
+          setNodeResult(node.id, { kind: 'text', value: ctx.research ?? '', label: String(config.name ?? 'Freier Agent') });
+          continue;
+        }
+
+        if (moduleId === 'tts') {
+          if (!ctx.script) throw new Error('TTS benötigt einen Sprechertext.');
+          const ttsMode = localStorage.getItem('contentflow.ttsMode') === 'local' ? 'local' : 'standard';
+          if (ttsMode === 'local') {
+            const provider = (localStorage.getItem('contentflow.localTtsProvider') || 'qwen3-tts') as LocalTtsProvider;
+            const voice = String(config.voice ?? localStorage.getItem('contentflow.localVoice') ?? 'Ryan');
+            ctx.audioPath = await cancellable(createLocalTts(ctx.script, provider, voice));
+            setNodeStatus(node.id, 'success', `Lokale KI-Stimme · ${voice}`);
+          } else {
+            const voice = String(config.voice ?? localStorage.getItem('contentflow.defaultVoice') ?? '');
+            ctx.audioPath = await cancellable(createTts(ctx.script, voice));
+            setNodeStatus(node.id, 'success', voice ? `Standardstimme · ${voice}` : 'Standardstimme erstellt');
+          }
+          setNodeResult(node.id, { kind: 'audio', value: ctx.audioPath, label: ttsMode === 'local' ? 'Lokale KI-TTS' : 'Standard-TTS' });
+          continue;
+        }
+
+        if (moduleId === 'captions') {
+          if (!ctx.audioPath || !ctx.script) throw new Error('Captions benötigen Sprechertext und TTS-Audio.');
+          setNodeStatus(node.id, 'warning', 'Untertitel aus TTS-Sprechgeschwindigkeit vorbereitet');
+          addLog('Captions werden aus TTS-Audio und Timing abgeleitet.');
+          setNodeResult(node.id, { kind: 'text', value: 'Untertitel-Timing aus TTS-Sprechgeschwindigkeit vorbereitet.', label: 'Captions' });
+          continue;
+        }
+
+        if (moduleId === 'video-compose') {
+          if (!ctx.asset || !ctx.audioPath) throw new Error('Video Composer benötigt Asset und TTS-Audio.');
+          if (!health?.ffmpegAvailable) throw new Error('FFmpeg fehlt auf diesem Mac.');
+          ctx.videoPath = await cancellable(renderVerticalVideo(ctx.asset.originalUrl, ctx.audioPath));
+          setNodeStatus(node.id, 'success', '1080 × 1920 MP4');
+          addLog('Video lokal gerendert.');
+          setNodeResult(node.id, { kind: 'file', value: ctx.videoPath, label: 'MP4-Video' });
+          continue;
+        }
+
+        if (moduleId === 'qc-agent') {
+          if (!ctx.videoPath) throw new Error('QC Agent benötigt ein gerendertes Video.');
+          setNodeStatus(node.id, 'success', 'Basisprüfung bestanden');
+          setNodeResult(node.id, { kind: 'text', value: 'Basisprüfung bestanden.', label: 'QC' });
+          continue;
+        }
+
+        if (moduleId === 'router') {
+          setNodeStatus(node.id, 'skipped', 'Logic Runtime folgt in V1.1');
+          setNodeResult(node.id, { kind: 'text', value: 'Logic Runtime folgt in V1.1.', label: 'Router' });
+          continue;
+        }
+
+        if (moduleId === 'export') {
+          if (!ctx.videoPath) throw new Error('Export benötigt ein gerendertes Video.');
+          setOutputPath(ctx.videoPath);
+          setNodeStatus(node.id, 'success', ctx.videoPath.split('/').pop() ?? 'MP4');
+          setNodeResult(node.id, { kind: 'file', value: ctx.videoPath, label: 'Export' });
+          continue;
+        }
+
+        setNodeStatus(node.id, 'skipped', 'Noch keine Runtime');
       }
 
-      if (!health?.ffmpegAvailable) {
-        setNodeStatus('render', 'error', 'FFmpeg fehlt');
-        throw new Error('FFmpeg fehlt. Einmalig im Terminal „brew install ffmpeg“ ausführen, danach Systemprüfung aktualisieren.');
-      }
-
-      setNodeStatus('render', 'running', '1080×1920');
-      const movie = await renderVerticalVideo(chosen.originalUrl, voiceFile);
-      setVideoPath(movie);
-      setNodeStatus('render', 'success', 'MP4 fertig');
-      setNodeStatus('export', 'success', movie.split('/').pop() ?? 'MP4');
-      addLog('Workflow abgeschlossen: vertikales MP4 wurde lokal gerendert.');
+      runContextRef.current = null;
+      setActiveProcessNodeId(null);
+      setPausedNodeId(null);
+      addLog('Flow erfolgreich abgeschlossen.');
     } catch (error) {
-      addLog(`Workflow gestoppt: ${errorText(error)}`);
-      const active = nodes.find((n) => n.data.status === 'running');
-      if (active) setNodeStatus(active.id, 'error', errorText(error));
+      const message = errorText(error);
+      const activeId = executionOrder.find((id) => nodes.find((node) => node.id === id)?.data.status === 'running');
+      if (activeId) setNodeStatus(activeId, 'error', message);
+      runContextRef.current = null;
+      setActiveProcessNodeId(null);
+      addLog(`Flow gestoppt: ${message}`);
     } finally {
+      cancelRejectRef.current = null;
       setRunning(false);
-      void refreshHealth();
     }
-  }, [article, health, imageQuery, images.length, model, nodes, refreshHealth, replicateInput, replicateModel, replicateToken, running, script, searchImages, selectedImage, setNodeStatus, useReplicate, addLog]);
+  }, [addLog, breakpoints, debugStops, edges, health, memoryItems.length, model, nodes, projectTitle, pushAgentActivity, running, setNodeResult, setNodeStatus, setNodes]);
 
-  const healthBadges = useMemo(() => [
-    ['Ollama', !!health?.ollamaAvailable],
-    ['TTS', !!health?.sayAvailable],
-    ['FFmpeg', !!health?.ffmpegAvailable]
-  ] as const, [health]);
+  useEffect(() => {
+    if (!pausedNodeId || running || (debugStops && breakpoints[pausedNodeId])) return;
+    const resumeId = pausedNodeId;
+    setPausedNodeId(null);
+    void runFlow(resumeId);
+  }, [breakpoints, debugStops, pausedNodeId, runFlow, running]);
+
+  const generateVersions = useCallback((nodeId: string, count: number) => {
+    const total = Math.max(1, Math.min(5, Math.round(count)));
+    if (total < 2) { addLog('Für zusätzliche Flow-Bahnen mindestens 2 Versionen wählen.'); return; }
+    const duplicateModules = new Set(['script-agent', 'storyboard-agent', 'asset-search', 'memory-card', 'tts', 'captions', 'video-compose', 'qc-agent', 'export']);
+    const originals = nodes.filter((node) => duplicateModules.has(node.data.moduleId));
+    const newNodes: Node<StudioNodeData>[] = [];
+    const newEdges: Edge[] = [];
+    for (let version = 2; version <= total; version += 1) {
+      const map = new Map(originals.map((node) => [node.id, `${node.id}-v${version}`]));
+      originals.forEach((node) => newNodes.push({ ...node, id: map.get(node.id)!, position: { x: node.position.x, y: node.position.y + version * 340 }, data: { ...node.data, config: { ...node.data.config, version }, detail: undefined, status: 'idle' } }));
+      edges.forEach((edge) => {
+        if (map.has(edge.source) && map.has(edge.target)) newEdges.push({ ...edge, id: `${edge.id}-v${version}`, source: map.get(edge.source)!, target: map.get(edge.target)! });
+      });
+    }
+    setNodes((current) => [...current, ...newNodes]);
+    setEdges((current) => [...current, ...newEdges]);
+    addLog(`${total - 1} zusätzliche Flow-Bahn(en) ab Script Agent eingefügt.`);
+    setSelectedNodeId(nodeId);
+  }, [addLog, edges, nodes, setEdges, setNodes]);
+
+  const startFrom = useCallback((nodeId: string) => { void runFlow(nodeId); }, [runFlow]);
+  const openIntervention = useCallback((nodeId: string) => { setSelectedNodeId(nodeId); }, []);
+  const manualAssetSearch = useCallback((nodeId: string, query: string) => {
+    const node = nodes.find((item) => item.id === nodeId);
+    if (!node) return;
+    updateNodeConfig(nodeId, { ...node.data.config, query });
+    setNodes((current) => current.map((item) => item.id === nodeId ? { ...item, data: { ...item.data, needsInput: undefined } } : item));
+    setSelectedNodeId(nodeId);
+    void runFlow(nodeId, { [nodeId]: query });
+  }, [nodes, runFlow, setNodes, updateNodeConfig]);
+  const deleteProject = useCallback((id: string) => {
+    setProjects((current) => current.filter((project) => project.id !== id));
+    addLog('Gespeichertes Projekt gelöscht.');
+  }, [addLog]);
+  const loadProject = useCallback((id: string) => {
+    const project = projects.find((item) => item.id === id);
+    if (!project) return;
+    setNodes(project.nodes); setEdges(project.edges); setModel(project.model); setProjectTitle(project.title); setSelectedNodeId(project.nodes[0]?.id ?? null); addLog(`Projekt geladen: ${project.title}`);
+  }, [addLog, projects, setEdges, setNodes]);
+  const saveFlowTemplate = useCallback(() => {
+    const title = flowTemplateTitle.trim();
+    if (!title) { addLog('Bitte zuerst einen Namen für die Flow-Vorlage eingeben.'); return; }
+    const template: StoredProject = { id: `flow-${title.toLowerCase().replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '') || Date.now()}`, title, nodes: createFlowTemplateNodes(nodes), edges, model: '', updatedAt: new Date().toISOString() };
+    setFlowTemplates((current) => [template, ...current.filter((item) => item.title !== title)].slice(0, 12));
+    addLog(`Flow-Vorlage gespeichert: ${template.title}`);
+  }, [addLog, edges, flowTemplateTitle, nodes]);
+  const deleteFlowTemplate = useCallback((id: string) => {
+    setFlowTemplates((current) => current.filter((template) => template.id !== id));
+    addLog('Flow-Vorlage gelöscht.');
+  }, [addLog]);
+  const loadFlowTemplate = useCallback((id: string) => {
+    const template = flowTemplates.find((item) => item.id === id);
+    if (!template) return;
+    setNodes(template.nodes); setEdges(template.edges); setModel(''); setFlowTemplateTitle(template.title); setProjectTitle('Neues Projekt'); setSelectedNodeId(template.nodes[0]?.id ?? null); addLog(`Flow-Vorlage geladen: ${template.title}`);
+  }, [addLog, flowTemplates, setEdges, setNodes]);
+  const newEmptyFlow = useCallback(() => {
+    setNodes([]); setEdges([]); setSelectedNodeId(null); setProjectTitle('Leerer Flow'); setMemoryItems([]); addLog('Leerer Flow erstellt.');
+  }, [addLog, setEdges, setNodes]);
+  const openResult = useCallback((nodeId: string) => setResultNodeId(nodeId), []);
+  const nodeTypes = useMemo(() => ({ studio: (props: any) => <StudioNode {...props} onStartFrom={startFrom} debugStops={debugStops} breakpoint={!!breakpoints[props.id]} onToggleBreakpoint={toggleBreakpoint} onOpenIntervention={openIntervention} /> }), [breakpoints, debugStops, openIntervention, startFrom, toggleBreakpoint]);
+
+  const cancelFlow = useCallback(() => {
+    if (!running) return;
+    cancelRequested.current = true;
+    cancelRejectRef.current?.();
+    addLog('Abbruch ausgeführt. Der aktuelle Agentenschritt wird beendet …');
+  }, [addLog, running]);
+
+  const toggleDebug = useCallback((enabled: boolean) => {
+    setDebugMode(enabled);
+    localStorage.setItem('contentflow.debug', String(enabled));
+  }, []);
+
+  const toggleDebugStops = useCallback((enabled: boolean) => {
+    setDebugStops(enabled);
+    localStorage.setItem('contentflow.debugStops', String(enabled));
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('contentflow.flowTemplates', JSON.stringify(flowTemplates));
+  }, [flowTemplates]);
+
+  const badges = useMemo(() => [
+    { label: 'Local AI', ok: !!health?.ollamaAvailable },
+    { label: 'FFmpeg', ok: !!health?.ffmpegAvailable },
+    { label: 'TTS', ok: !!health?.sayAvailable || !!health?.localTtsReady }
+  ], [health]);
 
   return (
-    <div className="app-shell">
+    <div className={`studio-shell ${libraryOpen ? 'library-open' : 'library-collapsed'}`}>
       <header className="topbar">
         <div className="brand">
-          <div className="brand-mark">TN</div>
-          <div><strong>TikTok News Studio</strong><span>LOCAL MVP · macOS</span></div>
+          <div className="brand-mark">CF</div>
+          <div>
+            <strong>ContentFlow Studio</strong>
+            <span>TikTok News · Local AI · macOS</span>
+          </div>
         </div>
+
+        <div className="quick-source">
+          <span>NEWS URL</span>
+          <input
+            value={sourceUrl}
+            onChange={(event) => setSourceUrl(event.target.value)}
+            placeholder="https://news.example.com/artikel"
+          />
+        </div>
+
         <div className="system-badges">
-          {healthBadges.map(([label, ok]) => <span className={`health ${ok ? 'ok' : 'off'}`} key={label}><i />{label}</span>)}
+          {badges.map((badge) => (
+            <span className={`health ${badge.ok ? 'ok' : 'off'}`} key={badge.label}>
+              <i />{badge.label}
+            </span>
+          ))}
         </div>
-        <div className="top-actions">
-          <button className="button ghost" onClick={() => void refreshHealth()}>System prüfen</button>
-          <button className="button primary" disabled={running} onClick={() => void runWorkflow()}>{running ? 'Workflow läuft …' : '▶ Workflow ausführen'}</button>
-        </div>
+
+        <button className="button ghost" onClick={() => setSettingsOpen(true)}>Einstellungen</button>
+        <button className="button ghost" onClick={() => void refreshHealth()}>System</button>
+        <button className="button danger-button top-cancel" onClick={cancelFlow}>Abbrechen</button>
+        <button className="button primary" disabled={running} onClick={() => void runFlow()}>
+          {running ? 'Flow läuft …' : '▶ Flow starten'}
+        </button>
       </header>
 
-      <aside className="sidebar">
-        <p className="eyebrow">NODE LIBRARY</p>
-        {[
-          ['📰','News Input','Quelle/Text'],['✦','Local AI','Ollama'],['⌕','Bildsuche','Wikimedia'],['◖','TTS','macOS'],['↗','Replicate','Cloud API'],['▶','Render','FFmpeg'],['⇩','Export','MP4']
-        ].map(([icon,title,sub]) => <div className="palette-item" key={title}><span>{icon}</span><div><strong>{title}</strong><small>{sub}</small></div></div>)}
-        <div className="sidebar-note"><strong>Prinzip</strong><p>Lokale Funktionen zuerst. Cloud-Nodes sind optional und austauschbar.</p></div>
-      </aside>
+      <NodeLibrary collapsed={!libraryOpen} onToggle={() => setLibraryOpen((value) => !value)} onAdd={addModule} projectTitle={projectTitle} projects={projects.map(({ id, title }) => ({ id, title }))} onProjectTitleChange={setProjectTitle} onLoadProject={loadProject} onDeleteProject={deleteProject} flowTemplateTitle={flowTemplateTitle} onFlowTemplateTitleChange={setFlowTemplateTitle} flowTemplates={flowTemplates.map(({ id, title }) => ({ id, title }))} onSaveFlowTemplate={saveFlowTemplate} onLoadFlowTemplate={loadFlowTemplate} onDeleteFlowTemplate={deleteFlowTemplate} onNewEmptyFlow={newEmptyFlow} />
 
-      <main className="workspace">
-        <div className="canvas-panel">
-          <div className="canvas-title"><span>NEWS → VIDEO</span><small>Nodes sind frei verschiebbar</small></div>
-          <ReactFlow nodes={nodes} edges={initialEdges} nodeTypes={nodeTypes} fitView minZoom={0.55} maxZoom={1.5} nodesDraggable>
-            <Background gap={26} size={1} />
-            <MiniMap pannable zoomable />
+      <main className="flow-workspace">
+        <div className="canvas-head">
+          <div>
+            <p className="eyebrow">WORKFLOW</p>
+            <strong>News → TikTok Video</strong>
+          </div>
+          <div className="canvas-actions">{selectedEdgeId && <button className="button ghost" onClick={() => { setEdges((current) => current.filter((edge) => edge.id !== selectedEdgeId)); setSelectedEdgeId(null); }}>Verbindung entfernen</button>}</div>
+          <div className="model-select">
+            <span>Lokales Modell</span>
+            <select value={model} onChange={(event) => setModel(event.target.value)}>
+              <option value="">Kein Modell</option>
+              {health?.ollamaModels.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div
+          className="flow-canvas"
+          onDrop={onDrop}
+          onDragOver={(event) => {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'move';
+          }}
+        >
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={nodeTypes}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
+            onReconnect={onReconnect}
+            edgesReconnectable
+            onEdgeClick={(_, edge) => { setSelectedEdgeId(edge.id); setSelectedNodeId(null); }}
+            onNodeClick={(_, node) => { setSelectedNodeId(node.id); setSelectedEdgeId(null); }}
+            onPaneClick={() => { setSelectedNodeId(null); setSelectedEdgeId(null); }}
+            fitView
+            minZoom={0.3}
+            maxZoom={1.8}
+            deleteKeyCode={['Backspace', 'Delete']}
+          >
+            <Background gap={28} size={1} />
+            <MiniMap pannable zoomable nodeStrokeWidth={2} />
             <Controls />
           </ReactFlow>
         </div>
 
-        <section className="config-panel">
-          <div className="section-heading"><div><p className="eyebrow">PROJEKT</p><h2>News Workflow</h2></div><span className="version-pill">v0.1</span></div>
-
-          <label className="field"><span>Geprüfter Nachrichtentext</span><textarea rows={8} value={article} onChange={(e) => setArticle(e.target.value)} placeholder="Hier den geprüften Artikeltext oder deine Faktenbasis einfügen …" /></label>
-
-          <div className="two-col">
-            <label className="field"><span>Lokales Modell</span><select value={model} onChange={(e) => setModel(e.target.value)}><option value="">Fallback ohne KI</option>{health?.ollamaModels.map((item) => <option key={item}>{item}</option>)}</select></label>
-            <label className="field"><span>Bild-Suchbegriff</span><input value={imageQuery} onChange={(e) => setImageQuery(e.target.value)} placeholder="z. B. Hamburg Polizei" /></label>
+        <div className="run-dock">
+          <div className="log-list">
+            {logs.slice(0, debugMode ? 20 : 4).map((entry, index) => <span key={`${entry}-${index}`}>{entry}</span>)}
           </div>
-
-          <label className="field"><span>Sprechertext</span><textarea rows={6} value={script} onChange={(e) => setScript(e.target.value)} placeholder="Wird durch die lokale KI erzeugt …" /></label>
-
-          <div className="media-box">
-            <div className="media-box-head"><strong>Bildquelle</strong><button className="text-button" onClick={() => void searchImages().catch((e) => addLog(errorText(e)))}>Neu suchen</button></div>
-            {selectedImage ? <div className="selected-media"><img src={selectedImage.thumbUrl} alt="Ausgewähltes Wikimedia-Medium" /><div><strong>{selectedImage.title}</strong><span>{selectedImage.license}</span><small>{selectedImage.artist}</small></div></div> : <div className="empty-media">Noch kein Medium ausgewählt</div>}
-            {images.length > 1 && <div className="thumb-strip">{images.map((image) => <button key={image.originalUrl} className={selectedImage?.originalUrl === image.originalUrl ? 'active' : ''} onClick={() => setSelectedImage(image)}><img src={image.thumbUrl} alt={image.title} /></button>)}</div>}
-          </div>
-
-          <details className="advanced"><summary>Replicate · optional</summary><label className="toggle"><input type="checkbox" checked={useReplicate} onChange={(e) => setUseReplicate(e.target.checked)} /><span>Cloud-Node in diesem Lauf verwenden</span></label><label className="field"><span>API Token · nur Sitzung</span><input type="password" value={replicateToken} onChange={(e) => setReplicateToken(e.target.value)} placeholder="r8_…" /></label><label className="field"><span>Modell / Version</span><input value={replicateModel} onChange={(e) => setReplicateModel(e.target.value)} placeholder="owner/model oder owner/model:version" /></label><label className="field"><span>Input JSON</span><textarea rows={6} value={replicateInput} onChange={(e) => setReplicateInput(e.target.value)} /></label>{replicateResult && <pre>{JSON.stringify(replicateResult, null, 2)}</pre>}</details>
-
-          {videoPath && <div className="output-card"><div><span>FERTIG</span><strong>{videoPath.split('/').pop()}</strong><small>{videoPath}</small></div><button className="button primary" onClick={() => void revealInFinder(videoPath)}>Im Finder zeigen</button></div>}
-
-          <div className="log"><div className="log-head"><strong>Run Log</strong><span>{log.length}</span></div>{log.map((line, index) => <p key={`${line}-${index}`}>{line}</p>)}</div>
-        </section>
+          {outputPath && (
+            <div className="output-ready">
+              <div><strong>MP4 fertig</strong><small>{outputPath.split('/').pop()}</small></div>
+              <button onClick={() => void revealInFinder(outputPath)}>Im Finder zeigen</button>
+            </div>
+          )}
+        </div>
       </main>
+
+      <InspectorPanel
+        node={selectedNode as Node<StudioNodeData> | null}
+        health={health}
+        onChangeConfig={updateNodeConfig}
+        onDelete={deleteNode}
+        onStartFrom={startFrom}
+        onGenerateVersions={generateVersions}
+        onOpenVideoEditor={() => setVideoEditorOpen(true)}
+        memoryItems={memoryItems}
+        onOpenResult={openResult}
+        agentActivity={agentActivity[selectedNode?.id ?? ''] ?? []}
+        onAgentCommand={runAgentCommand}
+        onManualAssetSearch={manualAssetSearch}
+      />
+      {activeProcessNodeId && <ProcessPopover node={nodes.find((item) => item.id === activeProcessNodeId) ?? null} activity={agentActivity[activeProcessNodeId] ?? []} paused={pausedNodeId === activeProcessNodeId} />}
+      {resultNodeId && <ResultOverlay node={nodes.find((item) => item.id === resultNodeId) ?? null} onClose={() => setResultNodeId(null)} onSave={(value) => { const node = nodes.find((item) => item.id === resultNodeId); if (node?.data.result) setNodeResult(resultNodeId, { ...node.data.result, value }); }} />}
+      {videoEditorOpen && <VideoEditorOverlay onClose={() => setVideoEditorOpen(false)} />}
+      {settingsOpen && <SettingsPanel health={health} logs={logs} debugMode={debugMode} onDebugChange={toggleDebug} debugStops={debugStops} onDebugStopsChange={toggleDebugStops} onRefresh={refreshHealth} onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }
 
-function buildNewsPrompt(article: string): string {
-  return `Du bist der lokale Skript-Node eines News-Produktionssystems. Verwende ausschließlich die folgenden vom Nutzer geprüften Informationen. Erfinde keine Fakten, Namen, Zahlen oder Ursachen. Erstelle einen präzisen deutschen Sprechertext für ein vertikales News-Video. Maximal 120 Wörter. Kurze, natürliche Sätze. Keine Hashtags, keine Regieanweisungen, kein Markdown. Antworte nur mit dem Sprechertext.\n\nGEPRÜFTE BASIS:\n${article.trim()}`;
+function buildProjectTitlePrompt(article: NewsArticle) {
+  return `Erzeuge einen kurzen deutschen Projekttitel mit maximal 60 Zeichen für diesen Nachrichtenartikel. Gib nur den Titel aus.\n${article.title}`;
 }
 
-function fallbackScript(article: string): string {
-  const words = article.trim().replace(/\s+/g, ' ').split(' ');
-  const cut = words.slice(0, 120).join(' ');
-  return cut + (words.length > 120 ? ' …' : '');
+function normalizeProjectTitle(value: string) {
+  return value.split('\n')[0].replace(/^[-*#\s]+|[-*#\s]+$/g, '').slice(0, 60).trim();
 }
 
-function deriveQuery(article: string): string {
-  const stop = new Set(['dass','eine','einer','eines','einen','einem','und','oder','aber','der','die','das','den','dem','des','ist','sind','war','waren','mit','von','für','auf','im','in','am','an','zu','zur','zum','bei','nach','wie','sich']);
-  return article.replace(/[^\p{L}\p{N}\s-]/gu, ' ').split(/\s+/).filter((w) => w.length > 3 && !stop.has(w.toLowerCase())).slice(0, 6).join(' ') || 'Nachrichten Deutschland';
+function buildResearchPrompt(article: NewsArticle, instruction: string) {
+  return `Du bist Research-Agent für ein deutsches Nachrichtenstudio.
+Arbeite ausschließlich mit dem folgenden Quelltext. Erfinde nichts.
+${instruction}
+
+TITEL: ${article.title}
+QUELLE: ${article.siteName}
+
+ARTIKEL:
+${article.text}
+
+Liefere kompakt:
+- bestätigte Kernaussagen
+- Namen, Orte, Zahlen und Daten
+- Punkte, die im Artikel unklar oder nicht belegt sind
+Keine Einleitung, keine Meinung.`;
 }
 
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function buildScriptPrompt(article: NewsArticle, research: string, duration: number, style: string) {
+  return `Erstelle aus den folgenden belegten Informationen einen deutschen TikTok-News-Sprechertext.
+Ziellänge: etwa ${duration} Sekunden.
+Stil: ${style}.
+Beginne mit einem klaren Hook, danach Ereignis, Bedeutung und Kontext.
+Keine erfundenen Fakten. Keine Quellen vortäuschen. Keine Regieanweisungen.
+
+TITEL: ${article.title}
+RESEARCH:
+${research}
+
+Gib ausschließlich den fertigen Sprechertext aus.`;
+}
+
+function buildStoryboardPrompt(article: NewsArticle, script: string, scenes: number) {
+  return `Du planst visuelle Assets für ein News-Video.
+Artikel: ${article.title}
+Sprechertext: ${script}
+Geplant sind ${scenes} Szenen.
+Gib als erste Zeile genau EINEN kurzen englischen oder deutschen Suchbegriff für Wikimedia Commons aus, der das zentrale reale Ereignis, den Ort oder die Organisation visuell am besten abbildet. Keine Anführungszeichen, keine Erklärung in der ersten Zeile.`;
+}
+
+function fallbackScript(article: NewsArticle, duration: number) {
+  const maxWords = Math.max(80, Math.round(duration * 2.25));
+  const words = article.text.split(/\s+/).filter(Boolean).slice(0, maxWords);
+  return `${article.title}. ${words.join(' ')}`;
+}
+
+function deriveQuery(article: NewsArticle) {
+  return article.title
+    .replace(/[|–—:].*$/, '')
+    .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .slice(0, 7)
+    .join(' ');
+}
+
+function normalizeSearchQuery(value: string) {
+  return value
+    .split('\n')[0]
+    .replace(/^[-*"'\s]+|[-*"'\s]+$/g, '')
+    .slice(0, 120)
+    .trim();
+}
+
+function errorText(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+function readJson<T>(key: string, fallback: T): T {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || 'null');
+    return value === null ? fallback : value as T;
+  } catch { return fallback; }
+}
+
+function createFlowTemplateNodes(nodes: Node<StudioNodeData>[]): Node<StudioNodeData>[] {
+  return nodes.map((node) => ({
+    ...node,
+    data: {
+      ...node.data,
+      status: 'idle' as const,
+      detail: undefined,
+      result: undefined,
+      needsInput: undefined,
+      config: Object.fromEntries(Object.entries(node.data.config).filter(([key]) => !['url', 'query', 'filename'].includes(key)))
+    }
+  }));
+}
+
+function readStoredProjects(): StoredProject[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem('contentflow.projects') || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+}
+
+function ProcessPopover({ node, activity, paused }: { node: Node<StudioNodeData> | null; activity: string[]; paused: boolean }) {
+  const [position, setPosition] = useState({ x: 72, y: 18 });
+  const [dragging, setDragging] = useState(false);
+  useEffect(() => {
+    if (!dragging) return undefined;
+    const move = (event: PointerEvent) => setPosition((current) => ({ x: Math.max(8, current.x + event.movementX), y: Math.max(8, current.y - event.movementY) }));
+    const up = () => setDragging(false);
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up, { once: true });
+    return () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+  }, [dragging]);
+  if (!node) return null;
+  const lines = activity.length ? activity : [node.data.detail || 'Schritt wird ausgeführt …'];
+  return <aside className="process-popover" style={{ left: position.x, bottom: position.y, right: 'auto', cursor: dragging ? 'grabbing' : 'grab' }} aria-live="polite"><div className="process-popover-head" onPointerDown={(event) => { event.preventDefault(); setDragging(true); }}><div><p className="eyebrow">AKTUELLER PROZESS</p><strong>{node.data.title}</strong></div><span className={paused ? 'paused' : 'live'}>{paused ? 'PAUSIERT' : '● LIVE'}</span></div><pre>{lines.slice(-8).join('\\n')}</pre></aside>;
+}
+
+function ResultOverlay({ node, onClose, onSave }: { node: Node<StudioNodeData> | null; onClose: () => void; onSave: (value: string) => void }) {
+  const result = node?.data.result;
+  const [value, setValue] = useState(result?.value ?? '');
+  if (!node || !result) return null;
+  const editable = result.kind === 'text';
+  return <div className="result-overlay" role="dialog" aria-modal="true"><section className="result-panel"><div className="settings-title"><div><p className="eyebrow">SCHRITT-ERGEBNIS</p><h2>{node.data.title}</h2><span>{result.label ?? 'Ausgabe des Flow-Schritts'}</span></div><button className="button ghost" onClick={onClose}>Schließen</button></div>{result.kind === 'audio' && <audio className="result-audio" controls src={mediaFileUrl(value)} />}{result.kind === 'file' && <p className="result-file">{value}</p>}<textarea className="result-text" readOnly={!editable} value={value} onChange={(event) => setValue(event.target.value)} />{editable && <div className="editor-controls"><button className="button ghost" onClick={onClose}>Verwerfen</button><button className="button primary" onClick={() => { onSave(value); onClose(); }}>Ergebnis speichern</button></div>}</section></div>;
+}
+
+function VideoEditorOverlay({ onClose }: { onClose: () => void }) {
+  const [caption, setCaption] = useState('');
+  return <div className="video-editor-overlay" role="dialog" aria-modal="true"><section className="video-editor"><div className="settings-title"><div><p className="eyebrow">VIDEO COMPOSER</p><h2>Manuelle Nacharbeit</h2><span>CapCut-artiger Entwurf für Schnitt, Text und Timing</span></div><button className="button ghost" onClick={onClose}>Schließen</button></div><div className="editor-track">Video-Vorschau / Timeline-Platzhalter</div><div className="field"><span>Caption-Overlay</span><textarea rows={3} value={caption} onChange={(event) => setCaption(event.target.value)} placeholder="Text für die manuelle Nacharbeit …" /></div><div className="editor-controls"><button className="button ghost" onClick={onClose}>Änderungen verwerfen</button><button className="button primary" onClick={onClose}>Entwurf speichern</button></div></section></div>;
 }

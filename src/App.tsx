@@ -70,6 +70,7 @@ function Studio() {
   const [resultNodeId, setResultNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [flowTemplates, setFlowTemplates] = useState<StoredProject[]>(() => readJson<StoredProject[]>('contentflow.flowTemplates', []));
+  const [flowTemplateTitle, setFlowTemplateTitle] = useState('');
   const [projectTitle, setProjectTitle] = useState(() => localStorage.getItem('contentflow.project.title') || 'Neues Projekt');
   const [projects, setProjects] = useState<StoredProject[]>(() => readStoredProjects());
   const [memoryItems, setMemoryItems] = useState<MediaResult[]>([]);
@@ -494,20 +495,30 @@ function Studio() {
     setSelectedNodeId(nodeId);
     void runFlow(nodeId, { [nodeId]: query });
   }, [nodes, runFlow, setNodes, updateNodeConfig]);
+  const deleteProject = useCallback((id: string) => {
+    setProjects((current) => current.filter((project) => project.id !== id));
+    addLog('Gespeichertes Projekt gelöscht.');
+  }, [addLog]);
   const loadProject = useCallback((id: string) => {
     const project = projects.find((item) => item.id === id);
     if (!project) return;
     setNodes(project.nodes); setEdges(project.edges); setModel(project.model); setProjectTitle(project.title); setSelectedNodeId(project.nodes[0]?.id ?? null); addLog(`Projekt geladen: ${project.title}`);
   }, [addLog, projects, setEdges, setNodes]);
   const saveFlowTemplate = useCallback(() => {
-    const template: StoredProject = { id: `flow-${Date.now()}`, title: projectTitle || 'Neuer Flow', nodes, edges, model, updatedAt: new Date().toISOString() };
-    setFlowTemplates((current) => [template, ...current].slice(0, 12));
+    const title = flowTemplateTitle.trim();
+    if (!title) { addLog('Bitte zuerst einen Namen für die Flow-Vorlage eingeben.'); return; }
+    const template: StoredProject = { id: `flow-${title.toLowerCase().replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '') || Date.now()}`, title, nodes: createFlowTemplateNodes(nodes), edges, model: '', updatedAt: new Date().toISOString() };
+    setFlowTemplates((current) => [template, ...current.filter((item) => item.title !== title)].slice(0, 12));
     addLog(`Flow-Vorlage gespeichert: ${template.title}`);
-  }, [addLog, edges, model, nodes, projectTitle]);
+  }, [addLog, edges, flowTemplateTitle, nodes]);
+  const deleteFlowTemplate = useCallback((id: string) => {
+    setFlowTemplates((current) => current.filter((template) => template.id !== id));
+    addLog('Flow-Vorlage gelöscht.');
+  }, [addLog]);
   const loadFlowTemplate = useCallback((id: string) => {
     const template = flowTemplates.find((item) => item.id === id);
     if (!template) return;
-    setNodes(template.nodes); setEdges(template.edges); setModel(template.model); setProjectTitle(template.title); setSelectedNodeId(template.nodes[0]?.id ?? null); addLog(`Flow-Vorlage geladen: ${template.title}`);
+    setNodes(template.nodes); setEdges(template.edges); setModel(''); setFlowTemplateTitle(template.title); setProjectTitle('Neues Projekt'); setSelectedNodeId(template.nodes[0]?.id ?? null); addLog(`Flow-Vorlage geladen: ${template.title}`);
   }, [addLog, flowTemplates, setEdges, setNodes]);
   const newEmptyFlow = useCallback(() => {
     setNodes([]); setEdges([]); setSelectedNodeId(null); setProjectTitle('Leerer Flow'); setMemoryItems([]); addLog('Leerer Flow erstellt.');
@@ -578,7 +589,7 @@ function Studio() {
         </button>
       </header>
 
-      <NodeLibrary collapsed={!libraryOpen} onToggle={() => setLibraryOpen((value) => !value)} onAdd={addModule} projectTitle={projectTitle} projects={projects.map(({ id, title }) => ({ id, title }))} onProjectTitleChange={setProjectTitle} onLoadProject={loadProject} flowTemplates={flowTemplates.map(({ id, title }) => ({ id, title }))} onSaveFlowTemplate={saveFlowTemplate} onLoadFlowTemplate={loadFlowTemplate} onNewEmptyFlow={newEmptyFlow} />
+      <NodeLibrary collapsed={!libraryOpen} onToggle={() => setLibraryOpen((value) => !value)} onAdd={addModule} projectTitle={projectTitle} projects={projects.map(({ id, title }) => ({ id, title }))} onProjectTitleChange={setProjectTitle} onLoadProject={loadProject} onDeleteProject={deleteProject} flowTemplateTitle={flowTemplateTitle} onFlowTemplateTitleChange={setFlowTemplateTitle} flowTemplates={flowTemplates.map(({ id, title }) => ({ id, title }))} onSaveFlowTemplate={saveFlowTemplate} onLoadFlowTemplate={loadFlowTemplate} onDeleteFlowTemplate={deleteFlowTemplate} onNewEmptyFlow={newEmptyFlow} />
 
       <main className="flow-workspace">
         <div className="canvas-head">
@@ -745,6 +756,20 @@ function readJson<T>(key: string, fallback: T): T {
     const value = JSON.parse(localStorage.getItem(key) || 'null');
     return value === null ? fallback : value as T;
   } catch { return fallback; }
+}
+
+function createFlowTemplateNodes(nodes: Node<StudioNodeData>[]): Node<StudioNodeData>[] {
+  return nodes.map((node) => ({
+    ...node,
+    data: {
+      ...node.data,
+      status: 'idle' as const,
+      detail: undefined,
+      result: undefined,
+      needsInput: undefined,
+      config: Object.fromEntries(Object.entries(node.data.config).filter(([key]) => !['url', 'query', 'filename'].includes(key)))
+    }
+  }));
 }
 
 function readStoredProjects(): StoredProject[] {

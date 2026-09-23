@@ -50,6 +50,7 @@ export type StudioNodeData = Record<string, unknown> & {
   status: NodeStatus;
   detail?: string;
   result?: StepResult;
+  needsInput?: { message: string };
   config: NodeConfig;
   acceptsInput: boolean;
   providesOutput: boolean;

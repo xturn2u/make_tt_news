@@ -393,7 +393,7 @@ function Studio() {
 
         if (moduleId === 'tts') {
           if (!ctx.script) throw new Error('TTS benötigt einen Sprechertext.');
-          ctx.audioPath = await cancellable(createTts(ctx.script, String(config.voice ?? '')));
+          ctx.audioPath = await cancellable(createTts(ctx.script, String(config.voice ?? localStorage.getItem('contentflow.defaultVoice') ?? '')));
           setNodeStatus(node.id, 'success', 'Lokale Audiodatei erstellt');
           setNodeResult(node.id, { kind: 'audio', value: ctx.audioPath, label: 'TTS-Vorschau' });
           continue;

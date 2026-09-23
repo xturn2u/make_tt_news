@@ -25,7 +25,7 @@ def main():
     if args.provider == 'qwen3-tts':
         from qwen_tts import Qwen3TTSModel
         import soundfile as sf
-        model = Qwen3TTSModel.from_pretrained('Qwen/Qwen3-TTS-0.6B-Base')
+        model = Qwen3TTSModel.from_pretrained('Qwen/Qwen3-TTS-12Hz-0.6B-Base')
         kwargs = {'text': args.text, 'language': 'German'}
         if args.voice:
             kwargs['ref_audio'] = args.voice

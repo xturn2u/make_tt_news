@@ -87,6 +87,43 @@ fn local_tts_ready(data_dir: &Path, provider: &str) -> bool {
     local_tts_root(data_dir, provider).join(".installed").is_file()
 }
 
+fn patch_qwen_python_annotations(vpy: &Path, root: &Path) -> Result<(), String> {
+    // Qwen3-TTS releases currently use PEP 604 annotations (for example
+    // str | None). macOS may only provide Python 3.9, where those
+    // annotations parse but fail while the module is imported. Add the
+    // postponed-annotation future to the bundled Qwen modules in-place.
+    let script = r#"
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+for site_packages in (root / "venv" / "lib").glob("python*/site-packages"):
+    package = site_packages / "qwen_tts"
+    if not package.is_dir():
+        continue
+    for path in package.rglob("*.py"):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        if "from __future__ import annotations" in text:
+            continue
+        path.write_text("from __future__ import annotations\n" + text, encoding="utf-8")
+"#;
+    let patched = Command::new(vpy)
+        .args(["-c", script])
+        .arg(root)
+        .output()
+        .map_err(|e| format!("Qwen-Python-Kompatibilität konnte nicht hergestellt werden: {e}"))?;
+    if !patched.status.success() {
+        return Err(format!(
+            "Qwen-Python-Kompatibilität konnte nicht hergestellt werden: {}",
+            String::from_utf8_lossy(&patched.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn local_tts_status(app: tauri::AppHandle, provider: String) -> Result<LocalTtsStatus, String> {
     let data_dir = ensure_data_dir(&app)?;
@@ -151,6 +188,7 @@ async fn create_local_tts(app: tauri::AppHandle, text: String, provider: String,
     fs::write(root.join("runner.py"), bundled_runner)
         .map_err(|e| format!("TTS-Runner konnte nicht aktualisiert werden: {e}"))?;
     if provider == "qwen3-tts" {
+        patch_qwen_python_annotations(&vpy, &root)?;
         let probe = Command::new(&vpy)
             .args(["-c", "import sox"])
             .output()

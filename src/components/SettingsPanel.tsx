@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import { createTts, installFfmpeg, installOllama, mediaFileUrl, MODEL_CATALOG, pullOllamaModel, type ModelCatalogItem } from '../desktop';
+import { createTts, createLocalTts, installFfmpeg, installLocalTts, installOllama, mediaFileUrl, MODEL_CATALOG, pullOllamaModel, type ModelCatalogItem } from '../desktop';
+import { LOCAL_TTS_CATALOG, type LocalTtsProvider } from '../localTts';
 import type { SystemStatus } from '../types';
 
 type Props = { health: SystemStatus | null; logs: string[]; debugMode: boolean; onDebugChange: (enabled: boolean) => void; debugStops: boolean; onDebugStopsChange: (enabled: boolean) => void; onRefresh: () => Promise<void>; onClose: () => void };
@@ -16,6 +17,8 @@ export default function SettingsPanel({ health, logs, debugMode, onDebugChange, 
   const [previewVoice, setPreviewVoice] = useState('');
   const [previewPath, setPreviewPath] = useState('');
   const [previewBusy, setPreviewBusy] = useState(false);
+  const [localProvider, setLocalProvider] = useState<LocalTtsProvider>(() => (localStorage.getItem('contentflow.localTtsProvider') as LocalTtsProvider) || 'qwen3-tts');
+  const [localTtsBusy, setLocalTtsBusy] = useState(false);
   const models = useMemo(() => MODEL_CATALOG.filter((m) => !query || (m.name + m.description).toLowerCase().includes(query.toLowerCase())), [query]);
 
   async function installModel(model: ModelCatalogItem) {
@@ -71,6 +74,8 @@ export default function SettingsPanel({ health, logs, debugMode, onDebugChange, 
   async function previewSelectedVoice() { if (!previewVoice) return; setPreviewBusy(true); setMessage(`${previewVoice} wird vorgelesen …`); try { const path = await createTts('Dies ist eine kurze Vorschau der ausgewählten Stimme.', previewVoice); setPreviewPath(path); } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); } finally { setPreviewBusy(false); } }
   function saveDefaultVoice(value: string) { setDefaultVoice(value); localStorage.setItem('contentflow.defaultVoice', value); setMessage(value ? `${value} ist jetzt die Standardstimme.` : 'Systemstandard als Standardstimme gespeichert.'); }
   function saveDriveFolder() { localStorage.setItem('contentflow.drive.folder', driveFolder); setMessage('Google-Drive-Ordner für Memory Cards gespeichert.'); }
+  async function setupLocalTts(provider: LocalTtsProvider) { setLocalTtsBusy(true); setMessage(`${provider} wird lokal eingerichtet …`); try { await installLocalTts(provider); localStorage.setItem('contentflow.localTtsProvider', provider); setLocalProvider(provider); setMessage(`${provider} ist lokal installiert.`); } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); } finally { setLocalTtsBusy(false); } }
+  async function previewLocalVoice() { setPreviewBusy(true); setMessage('Lokale KI-Stimme wird erzeugt …'); try { const path = await createLocalTts('Dies ist eine kurze Vorschau der lokalen KI-Stimme.', localProvider, previewVoice); setPreviewPath(path); } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); } finally { setPreviewBusy(false); } }
 
   return <div className="settings-overlay" role="dialog" aria-modal="true">
     <section className="settings-panel">
@@ -80,6 +85,7 @@ export default function SettingsPanel({ health, logs, debugMode, onDebugChange, 
         <div><i className={health?.ffmpegAvailable ? 'ready' : ''} /><strong>FFmpeg</strong><small>{health?.ffmpegAvailable ? 'Installiert und bereit' : 'Noch nicht installiert'}</small></div>
       </div>
       <div className="settings-tool voice-settings"><div><strong>Standardstimme</strong><p>Stimme für neue TTS-Schritte und die Vorschau.</p></div><div className="voice-controls"><select value={defaultVoice} onChange={(event) => saveDefaultVoice(event.target.value)}><option value="">Systemstandard</option>{femaleVoices.length > 0 && <optgroup label="Weiblich">{femaleVoices.map((voice) => <option key={"f-"+voice} value={voice}>{voice}</option>)}</optgroup>}{maleVoices.length > 0 && <optgroup label="Männlich">{maleVoices.map((voice) => <option key={"m-"+voice} value={voice}>{voice}</option>)}</optgroup>}{otherVoices.length > 0 && <optgroup label="Weitere">{otherVoices.map((voice) => <option key={"o-"+voice} value={voice}>{voice}</option>)}</optgroup>}</select><div className="voice-preview-row"><select value={previewVoice} onChange={(event) => setPreviewVoice(event.target.value)}><option value="">Stimme für Vorschau wählen …</option>{voices.map((voice) => <option key={"p-"+voice} value={voice}>{voice}</option>)}</select><button className="button ghost" disabled={!previewVoice || previewBusy} onClick={() => void previewSelectedVoice()}>{previewBusy ? "Lädt …" : "▶ Anhören"}</button></div>{previewPath && <audio className="audio-preview" controls autoPlay src={mediaFileUrl(previewPath)} />}</div></div>
+      <div className="settings-tool voice-settings"><div><strong>Lokale KI-Stimmen</strong><p>Offline-Sprachsynthese ohne API und ohne Cloud. Qwen3-TTS ist für die finale deutsche Stimme empfohlen.</p></div><div className="voice-controls"><select value={localProvider} onChange={(event) => setLocalProvider(event.target.value as LocalTtsProvider)}>{LOCAL_TTS_CATALOG.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.size}</option>)}</select><button className="button primary" disabled={localTtsBusy} onClick={() => void setupLocalTts(localProvider)}>{localTtsBusy ? 'Wird installiert …' : 'Lokal installieren'}</button><button className="button ghost" disabled={localTtsBusy} onClick={() => void previewLocalVoice()}>{previewBusy ? 'Erzeuge …' : '▶ Lokale Vorschau'}</button></div></div>
 
       <div className="settings-tool"><div><strong>Local-AI-Runtime</strong><p>ContentFlow lädt Ollama direkt herunter und startet es automatisch.</p><small>{health?.ollamaAvailable ? 'Bereit' : 'Nicht eingerichtet'}</small></div><button className="button primary" disabled={busy !== '' || !!health?.ollamaAvailable} onClick={() => void setupOllama()}>{busy === 'ollama' ? 'Wird installiert …' : health?.ollamaAvailable ? 'Bereit' : 'Einrichten'}</button></div>
       <div className="settings-search"><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="KI-Modelle suchen …" /></div>

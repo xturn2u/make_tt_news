@@ -10,6 +10,7 @@ export async function systemStatus(): Promise<SystemStatus> {
       ffmpegAvailable: false,
       ffmpegPath: null,
       sayAvailable: false,
+      ttsVoices: [],
       ollamaAvailable: false,
       ollamaModels: [],
       dataDir: 'Desktop-Funktionen sind nur in der Tauri-App verfügbar.'

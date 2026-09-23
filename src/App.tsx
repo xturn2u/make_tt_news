@@ -290,8 +290,16 @@ function Studio() {
           const instruction = String(config.prompt ?? '');
           if (health?.ollamaAvailable && model) {
             pushAgentActivity(node.id, 'Prompt wird an Ollama gesendet …');
-            ctx.research = await cancellable(ollamaGenerate(model, buildResearchPrompt(ctx.article, instruction)));
-            setNodeStatus(node.id, 'success', model);
+            try {
+              ctx.research = await cancellable(ollamaGenerate(model, buildResearchPrompt(ctx.article, instruction)));
+              setNodeStatus(node.id, 'success', model);
+            } catch (error) {
+              if (cancelRequested.current) throw error;
+              pushAgentActivity(node.id, `Ollama nicht erreichbar · Fallback: ${errorText(error)}`);
+              ctx.research = ctx.article.text;
+              setNodeStatus(node.id, 'warning', 'Ollama nicht erreichbar · Quelltext weitergegeben');
+              addLog('Research Agent: Ollama-Anfrage fehlgeschlagen, Quelltext als Fallback übernommen.');
+            }
           } else {
             pushAgentActivity(node.id, 'Lokale KI nicht erreichbar · Fallback wird verwendet.');
             ctx.research = ctx.article.text;

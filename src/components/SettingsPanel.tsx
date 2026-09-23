@@ -17,11 +17,14 @@ export default function SettingsPanel({ health, logs, debugMode, onDebugChange, 
   const [defaultVoice, setDefaultVoice] = useState(() => localStorage.getItem('contentflow.defaultVoice') || '');
   const [previewVoice, setPreviewVoice] = useState('');
   const [previewPath, setPreviewPath] = useState('');
-  const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewKind, setPreviewKind] = useState<'standard' | 'local' | null>(null);
+  const [standardPreviewBusy, setStandardPreviewBusy] = useState(false);
+  const [localPreviewBusy, setLocalPreviewBusy] = useState(false);
   const [localProvider, setLocalProvider] = useState<LocalTtsProvider>(() => (localStorage.getItem('contentflow.localTtsProvider') as LocalTtsProvider) || 'qwen3-tts');
   const [localTtsBusy, setLocalTtsBusy] = useState(false);
   const [localStatus, setLocalStatus] = useState<LocalTtsStatus | null>(null);
   const [localVoice, setLocalVoice] = useState(() => localStorage.getItem('contentflow.localVoice') || 'Ryan');
+  const [ttsMode, setTtsMode] = useState<'standard' | 'local'>(() => localStorage.getItem('contentflow.ttsMode') === 'local' ? 'local' : 'standard');
   const models = useMemo(() => MODEL_CATALOG.filter((m) => !query || (m.name + m.description).toLowerCase().includes(query.toLowerCase())), [query]);
   const qwenVoices = ['Ryan', 'Aiden', 'Vivian', 'Serena', 'Dylan', 'Eric'];
   useEffect(() => { void localTtsStatus(localProvider).then(setLocalStatus).catch(() => setLocalStatus(null)); }, [localProvider]);
@@ -76,11 +79,56 @@ export default function SettingsPanel({ health, logs, debugMode, onDebugChange, 
   const femaleVoices = voices.filter((voice) => classifyVoice(voice) === 'female');
   const maleVoices = voices.filter((voice) => classifyVoice(voice) === 'male');
   const otherVoices = voices.filter((voice) => classifyVoice(voice) === 'other');
-  async function previewSelectedVoice() { if (!previewVoice) return; setPreviewBusy(true); setMessage(`${previewVoice} wird vorgelesen …`); try { const path = await createTts('Dies ist eine kurze Vorschau der ausgewählten Stimme.', previewVoice); setPreviewPath(path); } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); } finally { setPreviewBusy(false); } }
-  function saveDefaultVoice(value: string) { setDefaultVoice(value); localStorage.setItem('contentflow.defaultVoice', value); setMessage(value ? `${value} ist jetzt die Standardstimme.` : 'Systemstandard als Standardstimme gespeichert.'); }
+  const previewBusy = standardPreviewBusy || localPreviewBusy;
+  async function previewSelectedVoice() {
+    if (!previewVoice || previewBusy) return;
+    setStandardPreviewBusy(true);
+    setPreviewKind('standard');
+    setPreviewPath('');
+    setMessage(`${previewVoice} wird vorgelesen …`);
+    try {
+      const path = await createTts('Dies ist eine kurze Vorschau der ausgewählten Stimme.', previewVoice);
+      setPreviewPath(path);
+    } catch (error) {
+      setPreviewPath('');
+      setPreviewKind(null);
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setStandardPreviewBusy(false);
+    }
+  }
+  function saveDefaultVoice(value: string) {
+    setDefaultVoice(value);
+    localStorage.setItem('contentflow.defaultVoice', value);
+    setTtsMode('standard');
+    localStorage.setItem('contentflow.ttsMode', 'standard');
+    setMessage(value ? `${value} ist jetzt die Standardstimme.` : 'Systemstandard als Standardstimme gespeichert.');
+  }
+  function saveTtsMode(value: 'standard' | 'local') {
+    setTtsMode(value);
+    localStorage.setItem('contentflow.ttsMode', value);
+    setMessage(value === 'local' ? 'Lokale KI-Stimme ist für neue TTS-Schritte aktiv.' : 'Standardstimme ist für neue TTS-Schritte aktiv.');
+  }
   function saveDriveFolder() { localStorage.setItem('contentflow.drive.folder', driveFolder); setMessage('Google-Drive-Ordner für Memory Cards gespeichert.'); }
   async function setupLocalTts(provider: LocalTtsProvider) { setLocalTtsBusy(true); setMessage(`${provider} wird lokal eingerichtet …`); try { await installLocalTts(provider); localStorage.setItem('contentflow.localTtsProvider', provider); setLocalProvider(provider); const status = await localTtsStatus(provider); setLocalStatus(status); setMessage(`${provider} ist lokal installiert und bereit für die Stimmenvorschau.`); } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); } finally { setLocalTtsBusy(false); } }
-  async function previewLocalVoice() { setPreviewBusy(true); setMessage(`Lokale ${localVoice}-Stimme wird erzeugt …`); try { const path = await createLocalTts('Dies ist eine kurze Vorschau der lokalen KI-Stimme. Diese Stimme kann später als Standard für deine Videos verwendet werden.', localProvider, localVoice); setPreviewPath(path); setMessage(`${localVoice} ist bereit. Du kannst die Vorschau unten abspielen.`); } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); } finally { setPreviewBusy(false); } }
+  async function previewLocalVoice() {
+    if (!localStatus?.ready || previewBusy) return;
+    setLocalPreviewBusy(true);
+    setPreviewKind('local');
+    setPreviewPath('');
+    setMessage(`Lokale ${localVoice}-Stimme wird erzeugt …`);
+    try {
+      const path = await createLocalTts('Dies ist eine kurze Vorschau der lokalen KI-Stimme. Diese Stimme kann später als Standard für deine Videos verwendet werden.', localProvider, localVoice);
+      setPreviewPath(path);
+      setMessage(`${localVoice} ist bereit. Du kannst die Vorschau unten abspielen.`);
+    } catch (error) {
+      setPreviewPath('');
+      setPreviewKind(null);
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLocalPreviewBusy(false);
+    }
+  }
 
   return <div className="settings-overlay" role="dialog" aria-modal="true">
     <section className="settings-panel">
@@ -89,8 +137,9 @@ export default function SettingsPanel({ health, logs, debugMode, onDebugChange, 
         <div><i className={health?.ollamaAvailable ? 'ready' : ''} /><strong>Local AI</strong><small>{health?.ollamaAvailable ? health.ollamaModels.length + ' Modelle erkannt' : 'Runtime nicht verbunden'}</small></div>
         <div><i className={health?.ffmpegAvailable ? 'ready' : ''} /><strong>FFmpeg</strong><small>{health?.ffmpegAvailable ? 'Installiert und bereit' : 'Noch nicht installiert'}</small></div>
       </div>
-      <div className="settings-tool voice-settings"><div><strong>Standardstimme</strong><p>Stimme für neue TTS-Schritte und die Vorschau.</p></div><div className="voice-controls"><select value={defaultVoice} onChange={(event) => saveDefaultVoice(event.target.value)}><option value="">Systemstandard</option>{femaleVoices.length > 0 && <optgroup label="Weiblich">{femaleVoices.map((voice) => <option key={"f-"+voice} value={voice}>{voice}</option>)}</optgroup>}{maleVoices.length > 0 && <optgroup label="Männlich">{maleVoices.map((voice) => <option key={"m-"+voice} value={voice}>{voice}</option>)}</optgroup>}{otherVoices.length > 0 && <optgroup label="Weitere">{otherVoices.map((voice) => <option key={"o-"+voice} value={voice}>{voice}</option>)}</optgroup>}</select><div className="voice-preview-row"><select value={previewVoice} onChange={(event) => setPreviewVoice(event.target.value)}><option value="">Stimme für Vorschau wählen …</option>{voices.map((voice) => <option key={"p-"+voice} value={voice}>{voice}</option>)}</select><button className="button ghost" disabled={!previewVoice || previewBusy} onClick={() => void previewSelectedVoice()}>{previewBusy ? "Lädt …" : "▶ Anhören"}</button></div>{previewPath && <audio className="audio-preview" controls autoPlay src={mediaFileUrl(previewPath)} />}</div></div>
-      <div className="settings-tool voice-settings"><div><strong>Lokale KI-Stimmen</strong><p>Offline-Sprachsynthese ohne API und ohne Cloud. Qwen3-TTS stellt auswählbare lokale Sprecher bereit.</p><small className={localStatus?.ready ? 'status-ready' : ''}>{localStatus?.ready ? 'Bereit · Stimmen können getestet werden' : localStatus?.message ?? 'Noch nicht eingerichtet'}</small></div><div className="voice-controls"><select value={localProvider} onChange={(event) => setLocalProvider(event.target.value as LocalTtsProvider)}>{LOCAL_TTS_CATALOG.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.size}</option>)}</select>{localProvider === 'qwen3-tts' && <select value={localVoice} onChange={(event) => { setLocalVoice(event.target.value); localStorage.setItem('contentflow.localVoice', event.target.value); }}><optgroup label="Qwen3 Sprecher">{qwenVoices.map((voice) => <option key={voice} value={voice}>{voice}</option>)}</optgroup></select>}<button className="button primary" disabled={localTtsBusy || !!localStatus?.ready} onClick={() => void setupLocalTts(localProvider)}>{localTtsBusy ? 'Wird installiert …' : localStatus?.ready ? 'Installiert' : 'Lokal installieren'}</button><button className="button ghost" disabled={localTtsBusy || previewBusy || !localStatus?.ready} onClick={() => void previewLocalVoice()}>{previewBusy ? 'Erzeuge …' : '▶ Stimme testen'}</button>{previewPath && <audio className="audio-preview" controls autoPlay src={mediaFileUrl(previewPath)} />}</div></div>
+      <div className="settings-tool voice-settings"><div><strong>Aktive Sprachausgabe</strong><p>Diese Auswahl gilt für neue TTS-Schritte im Workflow.</p></div><select value={ttsMode} onChange={(event) => saveTtsMode(event.target.value as 'standard' | 'local')}><option value="standard">Standardstimmen (macOS)</option><option value="local">Lokale KI-Stimme (Qwen3-TTS)</option></select></div>
+      <div className="settings-tool voice-settings"><div><strong>Standardstimme · macOS</strong><p>Stimme für neue TTS-Schritte und die Vorschau.</p></div><div className="voice-controls"><select value={defaultVoice} onChange={(event) => saveDefaultVoice(event.target.value)}><option value="">Systemstandard</option>{femaleVoices.length > 0 && <optgroup label="Weiblich">{femaleVoices.map((voice) => <option key={"f-"+voice} value={voice}>{voice}</option>)}</optgroup>}{maleVoices.length > 0 && <optgroup label="Männlich">{maleVoices.map((voice) => <option key={"m-"+voice} value={voice}>{voice}</option>)}</optgroup>}{otherVoices.length > 0 && <optgroup label="Weitere">{otherVoices.map((voice) => <option key={"o-"+voice} value={voice}>{voice}</option>)}</optgroup>}</select><div className="voice-preview-row"><select value={previewVoice} onChange={(event) => setPreviewVoice(event.target.value)}><option value="">Stimme für Vorschau wählen …</option>{voices.map((voice) => <option key={"p-"+voice} value={voice}>{voice}</option>)}</select><button className="button ghost" disabled={!previewVoice || previewBusy} onClick={() => void previewSelectedVoice()}>{standardPreviewBusy ? "Lädt …" : "▶ Anhören"}</button></div>{previewKind === 'standard' && previewPath && <audio key={previewPath} className="audio-preview" controls autoPlay src={mediaFileUrl(previewPath)} />}</div></div>
+      <div className="settings-tool voice-settings"><div><strong>Lokale KI-Stimme · Qwen3</strong><p>Offline-Sprachsynthese ohne API und ohne Cloud. Qwen3-TTS stellt auswählbare lokale Sprecher bereit.</p><small className={localStatus?.ready ? 'status-ready' : ''}>{localStatus?.ready ? 'Bereit · Stimmen können getestet werden' : localStatus?.message ?? 'Noch nicht eingerichtet'}</small></div><div className="voice-controls"><select value={localProvider} onChange={(event) => setLocalProvider(event.target.value as LocalTtsProvider)}>{LOCAL_TTS_CATALOG.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.size}</option>)}</select>{localProvider === 'qwen3-tts' && <select value={localVoice} onChange={(event) => { const value = event.target.value; setLocalVoice(value); localStorage.setItem('contentflow.localVoice', value); saveTtsMode('local'); }}><optgroup label="Qwen3 Sprecher">{qwenVoices.map((voice) => <option key={voice} value={voice}>{voice}</option>)}</optgroup></select>}<button className="button primary" disabled={localTtsBusy || !!localStatus?.ready} onClick={() => void setupLocalTts(localProvider)}>{localTtsBusy ? 'Wird installiert …' : localStatus?.ready ? 'Installiert' : 'Lokal installieren'}</button><button className="button ghost" disabled={localTtsBusy || previewBusy || !localStatus?.ready} onClick={() => void previewLocalVoice()}>{localPreviewBusy ? 'Erzeuge …' : '▶ Stimme testen'}</button>{previewKind === 'local' && previewPath && <audio key={previewPath} className="audio-preview" controls autoPlay src={mediaFileUrl(previewPath)} />}</div></div>
 
       <div className="settings-tool"><div><strong>Local-AI-Runtime</strong><p>ContentFlow lädt Ollama direkt herunter und startet es automatisch.</p><small>{health?.ollamaAvailable ? 'Bereit' : 'Nicht eingerichtet'}</small></div><button className="button primary" disabled={busy !== '' || !!health?.ollamaAvailable} onClick={() => void setupOllama()}>{busy === 'ollama' ? 'Wird installiert …' : health?.ollamaAvailable ? 'Bereit' : 'Einrichten'}</button></div>
       <div className="settings-search"><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="KI-Modelle suchen …" /></div>

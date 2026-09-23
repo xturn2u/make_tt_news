@@ -22,6 +22,18 @@ struct SystemStatus {
     ollama_available: bool,
     ollama_models: Vec<String>,
     data_dir: String,
+    local_tts_provider: String,
+    local_tts_ready: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalTtsStatus {
+    provider: String,
+    installed: bool,
+    ready: bool,
+    model_path: Option<String>,
+    message: String,
 }
 
 #[derive(Serialize)]
@@ -62,7 +74,64 @@ async fn system_status(app: tauri::AppHandle) -> Result<SystemStatus, String> {
         ollama_available,
         ollama_models,
         data_dir: data_dir.to_string_lossy().to_string(),
+        local_tts_provider: "qwen3-tts".into(),
+        local_tts_ready: local_tts_ready(&data_dir, "qwen3-tts"),
     })
+}
+
+fn local_tts_root(data_dir: &Path, provider: &str) -> PathBuf {
+    data_dir.join("runtime").join("tts").join(provider)
+}
+
+fn local_tts_ready(data_dir: &Path, provider: &str) -> bool {
+    local_tts_root(data_dir, provider).join(".installed").is_file()
+}
+
+#[tauri::command]
+fn local_tts_status(app: tauri::AppHandle, provider: String) -> Result<LocalTtsStatus, String> {
+    let data_dir = ensure_data_dir(&app)?;
+    let root = local_tts_root(&data_dir, &provider);
+    let installed = root.join(".installed").is_file();
+    let ready = installed && root.join("runner.py").is_file();
+    Ok(LocalTtsStatus {
+        provider: provider.clone(), installed, ready,
+        model_path: installed.then(|| root.to_string_lossy().to_string()),
+        message: if ready { "Lokale TTS-Runtime bereit".into() } else { "Lokale TTS-Runtime noch nicht eingerichtet".into() },
+    })
+}
+
+#[tauri::command]
+async fn install_local_tts(app: tauri::AppHandle, provider: String) -> Result<String, String> {
+    let data_dir = ensure_data_dir(&app)?;
+    let root = local_tts_root(&data_dir, &provider);
+    fs::create_dir_all(&root).map_err(|e| format!("TTS-Verzeichnis konnte nicht angelegt werden: {e}"))?;
+    let python = if resolve_binary("python3").is_some() { "python3" } else { "python" };
+    let venv = root.join("venv");
+    if !venv.join("bin").join("python").is_file() {
+        let status = Command::new(python).args(["-m", "venv"]).arg(&venv).status().map_err(|e| format!("Python-Runtime konnte nicht gestartet werden: {e}"))?;
+        if !status.success() { return Err("Python konnte keine lokale TTS-Umgebung anlegen.".into()); }
+    }
+    let vpy = venv.join("bin").join("python");
+    let package = match provider.as_str() { "qwen3-tts" => "qwen-tts", "chatterbox" => "chatterbox-tts", _ => return Err("Unbekannter lokaler TTS-Provider.".into()) };
+    let status = Command::new(&vpy).args(["-m", "pip", "install", "--upgrade", package]).status().map_err(|e| format!("Lokale TTS-Abhängigkeiten konnten nicht installiert werden: {e}"))?;
+    if !status.success() { return Err(format!("Installation von {package} fehlgeschlagen.")); }
+    let runner = include_str!("../resources/local_tts_runner.py");
+    fs::write(root.join("runner.py"), runner).map_err(|e| e.to_string())?;
+    fs::write(root.join(".installed"), format!("provider={provider}\npackage={package}\n")).map_err(|e| e.to_string())?;
+    Ok(root.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn create_local_tts(app: tauri::AppHandle, text: String, provider: String, voice: String, speed: f32) -> Result<String, String> {
+    if text.trim().is_empty() { return Err("Kein Sprechertext vorhanden.".into()); }
+    let data_dir = ensure_data_dir(&app)?;
+    let root = local_tts_root(&data_dir, &provider);
+    if !local_tts_ready(&data_dir, &provider) { return Err(format!("{provider} ist noch nicht installiert. Richte ihn in den Einstellungen ein.")); }
+    let output = data_dir.join(format!("voice-local-{}.wav", timestamp()));
+    let vpy = root.join("venv").join("bin").join("python");
+    let status = Command::new(vpy).arg(root.join("runner.py")).args(["--provider", &provider, "--text", &text, "--output"]).arg(&output).args(["--voice", &voice, "--speed", &speed.to_string()]).status().map_err(|e| format!("Lokale TTS-Ausführung fehlgeschlagen: {e}"))?;
+    if !status.success() { return Err("Das lokale TTS-Modell konnte keinen Audiostream erzeugen.".into()); }
+    Ok(output.to_string_lossy().to_string())
 }
 
 fn available_tts_voices() -> Vec<String> {
@@ -590,6 +659,9 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             system_status,
+            local_tts_status,
+            install_local_tts,
+            create_local_tts,
             install_ollama,
             ollama_pull_model,
             install_ffmpeg,

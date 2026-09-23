@@ -110,6 +110,25 @@ function Studio() {
     ));
   }, [setNodes]);
 
+  const runAgentCommand = useCallback(async (nodeId: string, command: string) => {
+    const node = nodes.find((item) => item.id === nodeId);
+    if (!node || !command.trim()) return;
+    pushAgentActivity(nodeId, `Zusatzkommando: ${command.trim()}`);
+    if (!health?.ollamaAvailable || !model) {
+      pushAgentActivity(nodeId, 'Lokale KI nicht erreichbar · Kommando nicht ausgeführt.');
+      return;
+    }
+    try {
+      pushAgentActivity(nodeId, 'Zusatzkommando wird verarbeitet …');
+      const prompt = String(node.data.config.prompt ?? '');
+      const response = await ollamaGenerate(model, `${prompt}\\n\\nEINGABE AUS AGENTENKONSOLE:\\n${command.trim()}`);
+      setNodeResult(nodeId, { kind: 'text', value: response, label: 'Agenten-Antwort' });
+      pushAgentActivity(nodeId, 'Antwort bereit und als Ergebnis gespeichert.');
+    } catch (error) {
+      pushAgentActivity(nodeId, `Fehler: ${errorText(error)}`);
+    }
+  }, [health, model, nodes, pushAgentActivity, setNodeResult]);
+
   const toggleBreakpoint = useCallback((nodeId: string) => {
     setBreakpoints((current) => {
       const next = { ...current, [nodeId]: !current[nodeId] };
@@ -511,7 +530,7 @@ function Studio() {
 
         <button className="button ghost" onClick={() => setSettingsOpen(true)}>Einstellungen</button>
         <button className="button ghost" onClick={() => void refreshHealth()}>System</button>
-        <button className="button danger-button top-cancel" disabled={!running} onClick={cancelFlow}>Abbrechen</button>
+        <button className="button danger-button top-cancel" onClick={cancelFlow}>Abbrechen</button>
         <button className="button primary" disabled={running} onClick={() => void runFlow()}>
           {running ? 'Flow läuft …' : '▶ Flow starten'}
         </button>
@@ -589,6 +608,8 @@ function Studio() {
         onOpenVideoEditor={() => setVideoEditorOpen(true)}
         memoryItems={memoryItems}
         onOpenResult={openResult}
+        agentActivity={agentActivity[selectedNode?.id ?? ''] ?? []}
+        onAgentCommand={runAgentCommand}
       />
       {resultNodeId && <ResultOverlay node={nodes.find((item) => item.id === resultNodeId) ?? null} onClose={() => setResultNodeId(null)} onSave={(value) => { const node = nodes.find((item) => item.id === resultNodeId); if (node?.data.result) setNodeResult(resultNodeId, { ...node.data.result, value }); }} />}
       {videoEditorOpen && <VideoEditorOverlay onClose={() => setVideoEditorOpen(false)} />}

@@ -25,7 +25,12 @@ def main():
     if args.provider == 'qwen3-tts':
         from qwen_tts import Qwen3TTSModel
         import soundfile as sf
-        model = Qwen3TTSModel.from_pretrained('Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice')
+        import torch
+        model = Qwen3TTSModel.from_pretrained(
+            'Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice',
+            device_map='cpu',
+            dtype=torch.float32
+        )
         # CustomVoice provides selectable local speakers without an external API
         speaker = args.voice or 'Ryan'
         wavs, sr = model.generate_custom_voice(
